@@ -102,7 +102,20 @@ test('server mounts auth, onboarding, shop operations, renewals, and static admi
   assert.equal(onboardingResponse.status, 201);
   const onboarded = await onboardingResponse.json();
   const shopId = onboarded.shop.id;
-  const shopToken = makeToken('SHOP_ADMIN', shopId);
+  assert.match(onboarded.shopAdminSetupToken, /^[A-Za-z0-9_-]{43}$/);
+  const activationResponse = await apiRequest('/api/shop-auth/setup', null, {
+    method: 'POST',
+    body: JSON.stringify({
+      shopId,
+      email: 'owner@example.com',
+      setupToken: onboarded.shopAdminSetupToken,
+      password: 'integrated-shop-owner-password',
+    }),
+  });
+  assert.equal(activationResponse.status, 200);
+  const shopSession = await activationResponse.json();
+  assert.equal(shopSession.shopId, shopId);
+  const shopToken = shopSession.accessToken;
 
   const dashboardResponse = await apiRequest(`/api/shops/${shopId}/dashboard`, shopToken);
   assert.equal(dashboardResponse.status, 200);
@@ -144,4 +157,7 @@ test('server mounts auth, onboarding, shop operations, renewals, and static admi
   const adminPage = await fetch(`${baseUrl}/super-admin`);
   assert.equal(adminPage.status, 200);
   assert.match(await adminPage.text(), /DEVELOPERS/);
+  const shopPage = await fetch(`${baseUrl}/shop-admin`);
+  assert.equal(shopPage.status, 200);
+  assert.match(await shopPage.text(), /shop-login-form/);
 });

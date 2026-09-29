@@ -163,6 +163,9 @@ function createSuperAdminRouter({
     try {
       const createdAt = now();
       const shopId = `pw_${crypto.randomUUID()}`;
+      const shopAdminSetupToken = crypto.randomBytes(32).toString('base64url');
+      const shopAdminSetupTokenHash = crypto.createHash('sha256').update(shopAdminSetupToken).digest('hex');
+      const shopAdminSetupExpiresAt = new Date(createdAt.getTime() + 7 * 24 * 60 * 60 * 1000);
       const qrUrl = new URL(onboardingUrl);
       qrUrl.searchParams.set('shopId', shopId);
       const qrCodeDataUrl = await qrCodeGenerator(qrUrl.toString());
@@ -183,6 +186,8 @@ function createSuperAdminRouter({
       };
       const createdShop = await adminRepository.createShopWithAudit({
         shop,
+        shopAdminSetupTokenHash,
+        shopAdminSetupExpiresAt,
         audit: {
           adminId: request.admin.id,
           action: 'SHOP_ONBOARDED',
@@ -199,6 +204,8 @@ function createSuperAdminRouter({
         shop: createdShop,
         onboardingUrl: qrUrl.toString(),
         qrCodeDataUrl,
+        shopAdminSetupToken,
+        shopAdminSetupExpiresAt,
       });
     } catch (error) {
       return next(error);

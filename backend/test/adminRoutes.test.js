@@ -122,6 +122,8 @@ test('onboarding creates an active shop with a unique ID and QR code', async () 
   assert.equal(body.shop.subscription_status, 'ACTIVE');
   assert.equal(body.shop.subscription_expiry_date, '2026-10-28T00:00:00.000Z');
   assert.match(body.qrCodeDataUrl, /^data:image\/png;base64,/);
+  assert.match(body.shopAdminSetupToken, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(new Date(body.shopAdminSetupExpiresAt).toISOString(), '2026-10-05T00:00:00.000Z');
   assert.equal(new URL(body.onboardingUrl).searchParams.get('shopId'), body.shop.id);
   assert.equal(auditEntries.at(-1).action, 'SHOP_ONBOARDED');
 });

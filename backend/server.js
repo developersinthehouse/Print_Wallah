@@ -9,6 +9,7 @@ const { createShopAuth } = require('./middleware/shopAuth');
 const { createSubscriptionCheck } = require('./middleware/subCheck');
 const { createPostgresRepositories } = require('./postgresRepositories');
 const { createShopRouter } = require('./shopRoutes');
+const { createShopSessionRouter } = require('./shopSessionRoutes');
 const { createSubscriptionRouter } = require('./subscriptionRoutes');
 const { startExpiryMonitor } = require('./subscriptionEngine');
 
@@ -50,6 +51,12 @@ function createApp({ pool, configuration, logger = console }) {
     jwtSecret: configuration.superAdminJwtSecret,
     issuer: configuration.superAdminJwtIssuer,
     audience: configuration.superAdminJwtAudience,
+  }));
+  app.use('/api/shop-auth', createShopSessionRouter({
+    pool,
+    jwtSecret: configuration.shopJwtSecret,
+    issuer: configuration.shopJwtIssuer,
+    audience: configuration.shopJwtAudience,
   }));
   app.use('/api/shops', createShopRouter({
     shopRepository: repositories.shopRepository,

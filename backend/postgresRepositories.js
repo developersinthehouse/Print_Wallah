@@ -251,7 +251,7 @@ function createPostgresRepositories(pool) {
   };
 
   const adminRepository = {
-    async createShopWithAudit({ shop, audit }) {
+    async createShopWithAudit({ shop, audit, shopAdminSetupTokenHash, shopAdminSetupExpiresAt }) {
       return withTransaction(pool, async (client) => {
         const inserted = await client.query(
           `INSERT INTO shop_profiles
@@ -265,6 +265,13 @@ function createPostgresRepositories(pool) {
             shop.subscription_expiry_date, shop.subscription_status, shop.createdAt,
           ],
         );
+        if (shopAdminSetupTokenHash && shopAdminSetupExpiresAt) {
+          await client.query(
+            `INSERT INTO shop_admin_credentials (shop_id, setup_token_hash, setup_expires_at)
+             VALUES ($1, $2, $3)`,
+            [shop.id, shopAdminSetupTokenHash, shopAdminSetupExpiresAt],
+          );
+        }
         await insertAudit(client, audit);
         return mapShop(inserted.rows[0]);
       });

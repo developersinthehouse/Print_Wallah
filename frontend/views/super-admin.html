@@ -158,6 +158,10 @@
       .qr-result img { width: 220px; height: 220px; image-rendering: pixelated; border: 1px solid var(--line); }
       .qr-shop-id { font-weight: 700; }
       .qr-link { max-width: 100%; color: var(--accent-dark); overflow-wrap: anywhere; font-size: 12px; }
+      .setup-code { width: 100%; padding: 12px; background: #f8fafb; border: 1px solid var(--line); border-radius: 5px; }
+      .setup-code strong { display: block; margin-bottom: 6px; }
+      .setup-code output { display: block; overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: 12px; }
+      .setup-code small { display: block; margin-top: 7px; color: var(--muted); }
       .hidden { display: none !important; }
 
       @media (max-width: 850px) {
@@ -279,6 +283,11 @@
         <img id="qr-image" alt="QR code for the newly created shop">
         <div id="qr-shop-id" class="qr-shop-id"></div>
         <a id="qr-url" class="qr-link"></a>
+        <div class="setup-code">
+          <strong>One-time owner setup code</strong>
+          <output id="shop-setup-code"></output>
+          <small>Share this code securely with the owner. It expires in 7 days and is shown only once.</small>
+        </div>
         <a id="qr-download" class="quiet-button" download="print-wallah-shop-qr.png">Download QR</a>
       </div>
     </dialog>
@@ -541,6 +550,7 @@
           form.reset();
           document.getElementById('qr-image').src = result.qrCodeDataUrl;
           document.getElementById('qr-shop-id').textContent = result.shop.id;
+          document.getElementById('shop-setup-code').textContent = result.shopAdminSetupToken;
           const qrUrl = document.getElementById('qr-url');
           qrUrl.href = result.onboardingUrl;
           qrUrl.textContent = result.onboardingUrl;

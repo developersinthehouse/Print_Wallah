@@ -32,4 +32,6 @@ npm start
 
 The API serves the shop dashboard at `/shop-admin`, the DEVELOPERS panel at `/super-admin`, and reports database connectivity at `/healthz`. Admin login is handled by `/api/admin-auth/login`; passwords are stored as scrypt hashes and sessions use 15-minute JWTs. Server startup also applies pending migrations and starts the subscription expiry monitor.
 
+When a super-admin onboards a shop, the result includes a one-time owner setup code valid for seven days. Share it securely with the owner; the owner opens `/shop-admin`, selects **Set up account**, and enters the shop ID, registered email, setup code, and a password of at least 12 characters. After activation, the owner signs in there with the shop ID, email, and password. Shop sessions use eight-hour JWTs and are stored in that browser's session storage. The setup code is only returned once and is not emailed automatically.
+
 Compose stores local PostgreSQL data in the persistent Docker volume `print_wallah_pg_data` and binds its port only to `127.0.0.1`. Never commit `.env`; the example values are for local development only, not production credentials. Database behavior is covered with `pg-mem`; Docker/PostgreSQL was unavailable in the implementation environment, so the Compose service and real connection still need verification there.

@@ -60,6 +60,21 @@
       .brand-name { font-weight: 750; letter-spacing: 0.02em; }
       .brand-subtitle { margin-top: 2px; color: var(--muted); font-size: 12px; }
       .shop-label { color: var(--muted); white-space: nowrap; }
+      .auth-shell { width: min(480px, calc(100% - 32px)); margin: 54px auto; }
+      .auth-panel { padding: 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; }
+      .auth-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 18px; padding: 4px; background: #edf1f4; border-radius: 5px; }
+      .auth-tab { min-height: 36px; border: 0; border-radius: 4px; color: var(--muted); background: transparent; cursor: pointer; font-weight: 650; }
+      .auth-tab[aria-selected="true"] { color: var(--ink); background: #fff; box-shadow: 0 1px 3px rgba(23, 33, 43, 0.12); }
+      .auth-title { margin: 0 0 7px; font-size: 22px; }
+      .auth-description { margin: 0 0 18px; color: var(--muted); line-height: 1.5; }
+      .auth-form { display: grid; gap: 13px; }
+      .auth-field { display: grid; gap: 6px; color: #33414d; font-size: 12px; font-weight: 650; }
+      .auth-field input { width: 100%; }
+      .auth-form[hidden] { display: none; }
+      .auth-submit { width: 100%; }
+      .signout-button { min-height: 36px; padding: 0 12px; color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; }
+      .signout-button[hidden] { display: none; }
+      main[hidden], .auth-shell[hidden] { display: none; }
       .subscription-lock {
         width: min(1240px, calc(100% - 48px));
         margin: 24px auto 0;
@@ -185,12 +200,38 @@
         </div>
       </div>
       <div id="shop-label" class="shop-label">Shop operations</div>
+      <button id="shop-signout" class="signout-button" type="button" hidden>Sign out</button>
     </header>
     <div id="subscription-lock" class="subscription-lock" role="alert" hidden>
       Subscription expired. Dashboard and print-agent access are paused until renewal is confirmed.
     </div>
 
-    <main>
+    <section id="shop-auth-panel" class="auth-shell" aria-labelledby="shop-auth-title" hidden>
+      <div class="auth-panel">
+        <div class="auth-tabs" role="tablist" aria-label="Shop account access">
+          <button id="shop-login-tab" class="auth-tab" type="button" role="tab" aria-selected="true">Sign in</button>
+          <button id="shop-setup-tab" class="auth-tab" type="button" role="tab" aria-selected="false">Set up account</button>
+        </div>
+        <h1 id="shop-auth-title" class="auth-title">Shop account</h1>
+        <p id="shop-auth-description" class="auth-description">Sign in with the shop ID, owner email, and password.</p>
+        <form id="shop-login-form" class="auth-form">
+          <label class="auth-field">Shop ID<input name="shopId" autocomplete="organization" required></label>
+          <label class="auth-field">Owner email<input name="email" type="email" autocomplete="username" maxlength="254" required></label>
+          <label class="auth-field">Password<input name="password" type="password" autocomplete="current-password" required></label>
+          <button class="primary-button auth-submit" type="submit">Sign in</button>
+        </form>
+        <form id="shop-setup-form" class="auth-form" hidden>
+          <label class="auth-field">Shop ID<input name="shopId" autocomplete="organization" required></label>
+          <label class="auth-field">Owner email<input name="email" type="email" autocomplete="email" maxlength="254" required></label>
+          <label class="auth-field">One-time setup code<input name="setupToken" autocomplete="one-time-code" required></label>
+          <label class="auth-field">Create password<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" required></label>
+          <button class="primary-button auth-submit" type="submit">Activate shop account</button>
+        </form>
+        <p id="shop-auth-feedback" class="feedback" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <main id="shop-dashboard" hidden>
       <div class="page-heading">
         <h1>Shop operations</h1>
         <label class="date-label" for="history-date">
@@ -245,13 +286,16 @@
     </main>
 
     <script>
-      const shopId = sessionStorage.getItem('printWallahShopId');
-      const accessToken = sessionStorage.getItem('printWallahAccessToken');
+      let shopId = sessionStorage.getItem('printWallahShopId');
+      let accessToken = sessionStorage.getItem('printWallahAccessToken');
       const apiBase = (sessionStorage.getItem('printWallahApiBase') || '').replace(/\/$/, '');
       const dateInput = document.getElementById('history-date');
       const pageStatus = document.getElementById('page-status');
       const historyBody = document.getElementById('history-body');
       const rateFeedback = document.getElementById('rate-feedback');
+      const authPanel = document.getElementById('shop-auth-panel');
+      const dashboard = document.getElementById('shop-dashboard');
+      const authFeedback = document.getElementById('shop-auth-feedback');
       const money = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' });
 
       function localDateString(date) {
@@ -273,6 +317,71 @@
         element.dataset.kind = kind || '';
       }
 
+      function clearShopSession() {
+        shopId = null;
+        accessToken = null;
+        sessionStorage.removeItem('printWallahShopId');
+        sessionStorage.removeItem('printWallahAccessToken');
+      }
+
+      function showShopAuth(message, kind) {
+        authPanel.hidden = false;
+        dashboard.hidden = true;
+        document.getElementById('shop-signout').hidden = true;
+        if (message) setStatus(authFeedback, message, kind);
+      }
+
+      function setAuthMode(mode) {
+        const isLogin = mode === 'login';
+        document.getElementById('shop-login-tab').setAttribute('aria-selected', String(isLogin));
+        document.getElementById('shop-setup-tab').setAttribute('aria-selected', String(!isLogin));
+        document.getElementById('shop-login-form').hidden = !isLogin;
+        document.getElementById('shop-setup-form').hidden = isLogin;
+        document.getElementById('shop-auth-title').textContent = isLogin ? 'Shop sign in' : 'Activate shop account';
+        document.getElementById('shop-auth-description').textContent = isLogin
+          ? 'Sign in with your shop ID, owner email, and password.'
+          : 'Use the one-time setup code supplied by your shop administrator.';
+        setStatus(authFeedback, '');
+      }
+
+      async function submitShopAuth(path, form) {
+        const button = form.querySelector('button[type="submit"]');
+        button.disabled = true;
+        setStatus(authFeedback, path === '/setup' ? 'Activating account…' : 'Signing in…');
+        try {
+          const formData = new FormData(form);
+          const response = await fetch(`${apiBase}/api/shop-auth${path}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(Object.fromEntries(formData.entries())),
+          });
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            const messages = {
+              INVALID_SHOP_CREDENTIALS: 'Shop ID, email, or password is incorrect.',
+              INVALID_SHOP_SETUP: 'Setup code is invalid or expired. Ask your administrator for a new code.',
+              SHOP_LOGIN_RATE_LIMITED: 'Too many attempts. Wait 15 minutes and try again.',
+            };
+            throw new Error(messages[body.error] || body.error || `Request failed (${response.status})`);
+          }
+          shopId = body.shopId;
+          accessToken = body.accessToken;
+          sessionStorage.setItem('printWallahShopId', shopId);
+          sessionStorage.setItem('printWallahAccessToken', accessToken);
+          form.reset();
+          document.getElementById('shop-login-form').elements.shopId.value = shopId;
+          document.getElementById('shop-setup-form').elements.shopId.value = shopId;
+          authPanel.hidden = true;
+          dashboard.hidden = false;
+          document.getElementById('shop-signout').hidden = false;
+          await loadDashboard();
+        } catch (error) {
+          setStatus(authFeedback, error.message || 'Could not authenticate shop.', 'error');
+        } finally {
+          button.disabled = false;
+        }
+      }
+
       async function apiRequest(path, options = {}) {
         const response = await fetch(`${apiBase}${path}`, {
           ...options,
@@ -284,6 +393,10 @@
         });
         const body = await response.json().catch(() => ({}));
         if (!response.ok) {
+          if (response.status === 401) {
+            clearShopSession();
+            showShopAuth('Your shop session expired. Sign in again.', 'error');
+          }
           const messages = {
             SUBSCRIPTION_EXPIRED: 'This shop subscription has expired.',
             SHOP_SCOPE_FORBIDDEN: 'Your account cannot access this shop.',
@@ -336,20 +449,12 @@
 
       async function loadDashboard() {
         if (!shopId || !accessToken) {
-          document.querySelectorAll('#rates-form input, #rates-form button').forEach((control) => {
-            control.disabled = true;
-          });
-          setStatus(pageStatus, 'Sign in through the shop app to view this dashboard.', 'error');
-          historyBody.replaceChildren();
-          const row = document.createElement('tr');
-          const cell = document.createElement('td');
-          cell.className = 'empty-cell';
-          cell.colSpan = 5;
-          cell.textContent = 'Sign in to load print history.';
-          row.append(cell);
-          historyBody.append(row);
+          showShopAuth();
           return;
         }
+        authPanel.hidden = true;
+        dashboard.hidden = false;
+        document.getElementById('shop-signout').hidden = false;
 
         if (!dateInput.value) {
           setStatus(pageStatus, 'Choose a valid activity date.', 'error');
@@ -406,8 +511,28 @@
         }
       });
 
+      const shopQueryId = new URLSearchParams(window.location.search).get('shopId') || '';
+      document.querySelectorAll('#shop-login-form [name="shopId"], #shop-setup-form [name="shopId"]').forEach((input) => {
+        input.value = shopId || shopQueryId;
+      });
+      document.getElementById('shop-login-tab').addEventListener('click', () => setAuthMode('login'));
+      document.getElementById('shop-setup-tab').addEventListener('click', () => setAuthMode('setup'));
+      document.getElementById('shop-login-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        submitShopAuth('/login', event.currentTarget);
+      });
+      document.getElementById('shop-setup-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        submitShopAuth('/setup', event.currentTarget);
+      });
+      document.getElementById('shop-signout').addEventListener('click', () => {
+        clearShopSession();
+        setAuthMode('login');
+        showShopAuth('You have signed out.');
+      });
       dateInput.value = localDateString(new Date());
       dateInput.addEventListener('change', loadDashboard);
+      if (!shopId || !accessToken) setAuthMode('login');
       loadDashboard();
     </script>
   </body>
