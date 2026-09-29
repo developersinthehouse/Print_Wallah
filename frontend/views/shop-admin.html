@@ -13,8 +13,9 @@
         --line: #dce3e8;
         --surface: #ffffff;
         --canvas: #f2f5f8;
-        --accent: #4f46e5;
-        --accent-dark: #3730a3;
+        --accent: #b3261e;
+        --accent-dark: #842018;
+        --payment: #087443;
         --good: #087443;
         --bad: #b42318;
         --focus: #a5b4fc;
@@ -25,9 +26,6 @@
         margin: 0;
         color: var(--ink);
         background-color: var(--canvas);
-        background-image: linear-gradient(135deg, rgba(79, 70, 229, 0.035) 25%, transparent 25%),
-          linear-gradient(315deg, rgba(16, 116, 67, 0.025) 25%, transparent 25%);
-        background-size: 24px 24px;
         font-family: "Aptos", "Segoe UI", sans-serif;
         font-size: 14px;
       }
@@ -47,18 +45,13 @@
         border-bottom: 1px solid var(--line);
       }
       .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
-      .brand-mark {
-        width: 34px;
-        height: 34px;
-        display: grid;
-        place-items: center;
-        color: #fff;
-        background: var(--accent);
-        border-radius: 7px;
-        font-weight: 800;
-      }
-      .brand-name { font-weight: 750; letter-spacing: 0.02em; }
-      .brand-subtitle { margin-top: 2px; color: var(--muted); font-size: 12px; }
+      .brand-logo { width: 42px; height: 42px; object-fit: contain; }
+      .developer-logo { width: 32px; height: 32px; object-fit: contain; }
+      .brand-name { font-weight: 800; }
+      .brand-subtitle { margin-top: 3px; color: var(--muted); font-size: 11px; }
+      .brand-credit { display: flex; align-items: center; gap: 7px; padding-left: 13px; border-left: 1px solid var(--line); }
+      .brand-credit span { color: var(--muted); font-size: 11px; line-height: 1.25; }
+      .brand-credit strong { display: block; color: var(--ink); font-size: 11px; }
       .shop-label { color: var(--muted); white-space: nowrap; }
       .auth-shell { width: min(480px, calc(100% - 32px)); margin: 54px auto; }
       .auth-panel { padding: 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; }
@@ -132,7 +125,7 @@
       .section-note { color: var(--muted); font-size: 12px; }
       .rate-form {
         display: grid;
-        grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+        grid-template-columns: repeat(3, minmax(180px, 1fr));
         align-items: end;
         gap: 16px;
         padding: 18px;
@@ -141,6 +134,10 @@
         border-radius: 6px;
       }
       .rate-field { display: grid; gap: 7px; color: #33414d; font-weight: 600; }
+      .rate-field.full { grid-column: 1 / -1; }
+      .rate-field small { color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.4; }
+      .rate-field input { width: 100%; }
+      .upi-field { border-left: 3px solid var(--payment); padding-left: 12px; }
       .input-wrap { position: relative; }
       .currency { position: absolute; top: 11px; left: 11px; color: var(--muted); }
       .rate-input { width: 100%; padding-left: 27px; }
@@ -156,11 +153,12 @@
       }
       .primary-button:hover { background: var(--accent-dark); }
       .primary-button:disabled { opacity: 0.6; cursor: wait; }
+      .rate-form .primary-button { grid-column: 1 / -1; justify-self: end; }
       .feedback { min-height: 20px; margin: 8px 2px 0; color: var(--muted); font-size: 12px; }
       .feedback[data-kind="error"] { color: var(--bad); }
       .feedback[data-kind="success"] { color: var(--good); }
 
-      .history-section { border-top: 1px solid var(--line); padding-top: 22px; }
+      .history-section { border-top: 1px solid var(--line); padding-top: 25px; }
       .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
       table { width: 100%; border-collapse: collapse; text-align: left; }
       th, td { padding: 13px 16px; border-bottom: 1px solid #e8edf0; white-space: nowrap; }
@@ -178,25 +176,37 @@
 
       @media (max-width: 700px) {
         main { width: min(100% - 32px, 1240px); margin-top: 24px; }
-        .topbar { min-height: 60px; padding: 0 16px; }
+        .topbar { min-height: 60px; gap: 8px; padding: 0 12px; }
+        .brand { gap: 7px; }
+        .brand-logo { width: 34px; height: 34px; }
+        .brand-name { font-size: 12px; }
+        .shop-label { display: none; }
         .subscription-lock { width: calc(100% - 32px); margin-top: 16px; }
         .page-heading { align-items: start; flex-direction: column; margin-bottom: 18px; }
         .metrics { margin-bottom: 24px; }
         .metric { min-height: 88px; padding: 15px; }
         .metric-value { font-size: 23px; }
         .rate-form { grid-template-columns: 1fr; gap: 13px; }
-        .primary-button { width: 100%; }
+        .rate-field.full, .rate-form .primary-button { grid-column: auto; }
+        .rate-form .primary-button { width: 100%; }
         .section-heading { align-items: start; flex-direction: column; }
+        .brand-credit { gap: 4px; padding-left: 8px; }
+        .brand-credit span { font-size: 10px; }
+        .developer-logo { width: 23px; height: 23px; }
       }
     </style>
   </head>
   <body>
     <header class="topbar">
       <div class="brand">
-        <div class="brand-mark" aria-hidden="true">P</div>
+        <img class="brand-logo" src="/assets/pw_logo.jpeg" alt="Print Wallah logo">
         <div>
           <div class="brand-name">PRINT WALLAH</div>
-          <div class="brand-subtitle">Powered by DEVELOPERS</div>
+          <div class="brand-subtitle">Shop operations</div>
+        </div>
+        <div class="brand-credit">
+          <img class="developer-logo" src="/assets/developers-logo_nobg.webp" alt="DEVELOPERS logo">
+          <span>Powered by<strong>DEVELOPERS</strong></span>
         </div>
       </div>
       <div id="shop-label" class="shop-label">Shop operations</div>
@@ -251,10 +261,10 @@
         </div>
       </section>
 
-      <section class="rates-section" aria-labelledby="rates-heading">
+      <section class="rates-section" aria-labelledby="settings-heading">
         <div class="section-heading">
-          <h2 id="rates-heading">Page rates</h2>
-          <span class="section-note">Prices apply to new print orders.</span>
+          <h2 id="settings-heading">Shop settings</h2>
+          <span class="section-note">Rates and customer payment details</span>
         </div>
         <form id="rates-form" class="rate-form">
           <label class="rate-field" for="bw-rate">
@@ -265,7 +275,12 @@
             Full color, per page
             <span class="input-wrap"><span class="currency" aria-hidden="true">₹</span><input id="color-rate" class="rate-input" type="number" min="0" max="100000" step="0.01" required></span>
           </label>
-          <button id="save-rates" class="primary-button" type="submit">Save rates</button>
+          <label class="rate-field full upi-field" for="upi-id">
+            UPI ID for customer payments
+            <input id="upi-id" type="text" maxlength="255" autocomplete="off" placeholder="shopname@bank">
+            <small>Example: printshop@oksbi. The customer checkout can display this after its payment integration is connected.</small>
+          </label>
+          <button id="save-rates" class="primary-button" type="submit">Save shop settings</button>
         </form>
         <p id="rate-feedback" class="feedback" role="status" aria-live="polite"></p>
       </section>
@@ -467,8 +482,10 @@
         try {
           const data = await apiRequest(`/api/shops/${encodeURIComponent(shopId)}/dashboard?${query}`);
           document.getElementById('shop-label').textContent = `Shop ${shopId}`;
-          document.getElementById('bw-rate').value = data.rates.blackAndWhitePerPage;
-          document.getElementById('color-rate').value = data.rates.colorPerPage;
+          const shopSettings = data.shopSettings || { rates: data.rates, upiId: '' };
+          document.getElementById('bw-rate').value = shopSettings.rates.blackAndWhitePerPage;
+          document.getElementById('color-rate').value = shopSettings.rates.colorPerPage;
+          document.getElementById('upi-id').value = shopSettings.upiId || '';
           document.getElementById('print-count').textContent = Number(data.dailySummary.totalPrints || 0).toLocaleString('en-IN');
           document.getElementById('print-revenue').textContent = money.format(Number(data.dailySummary.revenue || 0));
           renderHistory(data.recentJobs || []);
@@ -496,14 +513,17 @@
         button.disabled = true;
         setStatus(rateFeedback, 'Saving…');
         try {
-          await apiRequest(`/api/shops/${encodeURIComponent(shopId)}/rates`, {
+          await apiRequest(`/api/shops/${encodeURIComponent(shopId)}/settings`, {
             method: 'PUT',
             body: JSON.stringify({
-              blackAndWhitePerPage: Number(document.getElementById('bw-rate').value),
-              colorPerPage: Number(document.getElementById('color-rate').value),
+              rates: {
+                blackAndWhitePerPage: Number(document.getElementById('bw-rate').value),
+                colorPerPage: Number(document.getElementById('color-rate').value),
+              },
+              upiId: document.getElementById('upi-id').value.trim(),
             }),
           });
-          setStatus(rateFeedback, 'Rates saved.', 'success');
+          setStatus(rateFeedback, 'Shop settings saved.', 'success');
         } catch (error) {
           setStatus(rateFeedback, error.message || 'Could not save rates.', 'error');
         } finally {

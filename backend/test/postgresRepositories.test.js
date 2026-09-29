@@ -50,6 +50,19 @@ test('migrations and repositories persist shop, print, renewal, and audit data',
     blackAndWhitePerPage: 2,
     colorPerPage: 8,
   });
+  assert.deepEqual(await repositories.shopRepository.getShopSettings(shop.id), {
+    rates: { blackAndWhitePerPage: 2, colorPerPage: 8 },
+    upiId: '',
+  });
+
+  const updatedSettings = await repositories.shopRepository.updateShopSettings(shop.id, {
+    rates: { blackAndWhitePerPage: 2.5, colorPerPage: 9 },
+    upiId: 'printshop@oksbi',
+  });
+  assert.deepEqual(updatedSettings, {
+    rates: { blackAndWhitePerPage: 2.5, colorPerPage: 9 },
+    upiId: 'printshop@oksbi',
+  });
 
   const updatedRates = await repositories.shopRepository.updateRates(shop.id, {
     blackAndWhitePerPage: 2.5,

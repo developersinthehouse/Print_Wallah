@@ -74,6 +74,9 @@ function createApp({ pool, configuration, logger = console }) {
   }));
 
   const viewsDirectory = path.join(__dirname, '..', 'frontend', 'views');
+  const assetDirectory = path.join(__dirname, '..');
+  app.get('/assets/pw_logo.jpeg', (request, response) => response.sendFile(path.join(assetDirectory, 'pw_logo.jpeg')));
+  app.get('/assets/developers-logo_nobg.webp', (request, response) => response.sendFile(path.join(assetDirectory, 'developers-logo_nobg.webp')));
   app.get('/shop-admin', (request, response) => response.sendFile(path.join(viewsDirectory, 'shop-admin.html')));
   app.get('/super-admin', (request, response) => response.sendFile(path.join(viewsDirectory, 'super-admin.html')));
   app.use((request, response) => response.status(404).json({ error: 'NOT_FOUND' }));

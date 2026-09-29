@@ -64,6 +64,43 @@ function createPostgresRepositories(pool) {
       } : null;
     },
 
+    async getShopSettings(shopId) {
+      const result = await pool.query(
+        `SELECT black_and_white_per_page, color_per_page, upi_id
+         FROM shop_profiles WHERE id = $1`,
+        [shopId],
+      );
+      const row = result.rows[0];
+      return row ? {
+        rates: {
+          blackAndWhitePerPage: Number(row.black_and_white_per_page),
+          colorPerPage: Number(row.color_per_page),
+        },
+        upiId: row.upi_id || '',
+      } : null;
+    },
+
+    async updateShopSettings(shopId, settings) {
+      const result = await pool.query(
+        `UPDATE shop_profiles
+         SET black_and_white_per_page = $2,
+             color_per_page = $3,
+             upi_id = $4,
+             updated_at = NOW()
+         WHERE id = $1
+         RETURNING black_and_white_per_page, color_per_page, upi_id`,
+        [shopId, settings.rates.blackAndWhitePerPage, settings.rates.colorPerPage, settings.upiId],
+      );
+      const row = result.rows[0];
+      return row ? {
+        rates: {
+          blackAndWhitePerPage: Number(row.black_and_white_per_page),
+          colorPerPage: Number(row.color_per_page),
+        },
+        upiId: row.upi_id || '',
+      } : null;
+    },
+
     async updateRates(shopId, rates) {
       const result = await pool.query(
         `UPDATE shop_profiles

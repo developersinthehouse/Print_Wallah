@@ -51,6 +51,14 @@ function isValidRate(value) {
   );
 }
 
+function isValidUpiId(value) {
+  return value === '' || (
+    typeof value === 'string' &&
+    value.length <= 255 &&
+    /^[A-Za-z0-9][A-Za-z0-9._-]{1,127}@[A-Za-z][A-Za-z0-9.-]{1,63}$/.test(value)
+  );
+}
+
 function createShopRouter({
   shopRepository,
   printJobRepository,
@@ -84,8 +92,9 @@ function createShopRouter({
 
     try {
       const shopId = request.params.shopId;
-      const [rates, dailySummary, history] = await Promise.all([
+      const [rates, shopSettings, dailySummary, history] = await Promise.all([
         shopRepository.getRates(shopId),
+        shopRepository.getShopSettings ? shopRepository.getShopSettings(shopId) : null,
         printJobRepository.getSummary(shopId, dateRange),
         printJobRepository.listForShop(shopId, { ...dateRange, limit: 50, offset: 0 }),
       ]);
@@ -93,7 +102,7 @@ function createShopRouter({
       if (!rates) {
         return response.status(404).json({ error: 'SHOP_NOT_FOUND' });
       }
-      return response.json({ rates, dailySummary, recentJobs: history.jobs });
+      return response.json({ rates, shopSettings, dailySummary, recentJobs: history.jobs });
     } catch (error) {
       return next(error);
     }
@@ -118,6 +127,29 @@ function createShopRouter({
         return response.status(404).json({ error: 'SHOP_NOT_FOUND' });
       }
       return response.json({ rates: savedRates });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.put('/:shopId/settings', async (request, response, next) => {
+    const { rates, upiId } = request.body || {};
+    if (
+      !shopRepository.updateShopSettings ||
+      !rates ||
+      !isValidRate(rates.blackAndWhitePerPage) ||
+      !isValidRate(rates.colorPerPage) ||
+      !isValidUpiId(upiId)
+    ) {
+      return response.status(400).json({ error: 'INVALID_SHOP_SETTINGS' });
+    }
+
+    try {
+      const settings = await shopRepository.updateShopSettings(request.params.shopId, { rates, upiId });
+      if (!settings) {
+        return response.status(404).json({ error: 'SHOP_NOT_FOUND' });
+      }
+      return response.json({ settings });
     } catch (error) {
       return next(error);
     }

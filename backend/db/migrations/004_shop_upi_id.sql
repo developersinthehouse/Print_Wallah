@@ -1,0 +1,2 @@
+ALTER TABLE shop_profiles
+  ADD COLUMN upi_id TEXT NOT NULL DEFAULT '';

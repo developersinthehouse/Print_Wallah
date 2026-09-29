@@ -160,4 +160,11 @@ test('server mounts auth, onboarding, shop operations, renewals, and static admi
   const shopPage = await fetch(`${baseUrl}/shop-admin`);
   assert.equal(shopPage.status, 200);
   assert.match(await shopPage.text(), /shop-login-form/);
+
+  const printWallahLogo = await fetch(`${baseUrl}/assets/pw_logo.jpeg`);
+  const developersLogo = await fetch(`${baseUrl}/assets/developers-logo_nobg.webp`);
+  assert.equal(printWallahLogo.status, 200);
+  assert.match(printWallahLogo.headers.get('content-type'), /image\/jpeg/);
+  assert.equal(developersLogo.status, 200);
+  assert.match(developersLogo.headers.get('content-type'), /image\/webp/);
 });

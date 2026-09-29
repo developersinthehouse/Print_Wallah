@@ -4,7 +4,9 @@ const express = require('express');
 const { createShopRouter } = require('../shopRoutes');
 
 const storedRates = { blackAndWhitePerPage: 2, colorPerPage: 8 };
+let storedUpiId = '';
 let lastUpdatedRates;
+let lastShopSettings;
 let lastJobResult;
 let server;
 let baseUrl;
@@ -13,10 +15,19 @@ before(async () => {
   const app = express();
   const shopRepository = {
     getRates: async (shopId) => (shopId === 'shop-1' ? storedRates : null),
+    getShopSettings: async (shopId) => (shopId === 'shop-1'
+      ? { rates: storedRates, upiId: storedUpiId }
+      : null),
     updateRates: async (shopId, rates) => {
       if (shopId !== 'shop-1') return null;
       lastUpdatedRates = rates;
       return rates;
+    },
+    updateShopSettings: async (shopId, settings) => {
+      if (shopId !== 'shop-1') return null;
+      lastShopSettings = settings;
+      storedUpiId = settings.upiId;
+      return { ...settings };
     },
   };
   const printJobRepository = {
@@ -68,6 +79,7 @@ test('dashboard returns shop rates, date summary, and recent jobs', async () => 
 
   assert.equal(response.status, 200);
   assert.deepEqual(body.rates, storedRates);
+  assert.deepEqual(body.shopSettings, { rates: storedRates, upiId: '' });
   assert.deepEqual(body.dailySummary, { totalPrints: 12, revenue: 96 });
   assert.equal(body.recentJobs[0].id, 'job-1');
 });
@@ -121,4 +133,36 @@ test('print agent can report a result through the shop-scoped endpoint', async (
 
   assert.equal(response.status, 200);
   assert.deepEqual(lastJobResult, { status: 'PRINT_FAILED', error: 'Printer unavailable' });
+});
+
+test('shop settings save rates and a valid UPI ID together', async () => {
+  const response = await fetch(`${baseUrl}/api/shops/shop-1/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json', 'x-test-shop-id': 'shop-1' },
+    body: JSON.stringify({
+      rates: { blackAndWhitePerPage: 2.5, colorPerPage: 9 },
+      upiId: 'centralprints@oksbi',
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(lastShopSettings.upiId, 'centralprints@oksbi');
+  assert.deepEqual((await response.json()).settings.rates, {
+    blackAndWhitePerPage: 2.5,
+    colorPerPage: 9,
+  });
+});
+
+test('shop settings reject malformed UPI IDs', async () => {
+  const response = await fetch(`${baseUrl}/api/shops/shop-1/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json', 'x-test-shop-id': 'shop-1' },
+    body: JSON.stringify({
+      rates: { blackAndWhitePerPage: 2, colorPerPage: 8 },
+      upiId: 'not-a-upi-id',
+    }),
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: 'INVALID_SHOP_SETTINGS' });
 });

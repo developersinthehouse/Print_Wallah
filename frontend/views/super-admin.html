@@ -13,8 +13,8 @@
         --line: #dce3e8;
         --surface: #ffffff;
         --canvas: #f2f5f8;
-        --accent: #4f46e5;
-        --accent-dark: #3730a3;
+        --accent: #b3261e;
+        --accent-dark: #842018;
         --good: #087443;
         --bad: #b42318;
         --warning: #945900;
@@ -26,9 +26,6 @@
         margin: 0;
         color: var(--ink);
         background-color: var(--canvas);
-        background-image: linear-gradient(135deg, rgba(79, 70, 229, 0.035) 25%, transparent 25%),
-          linear-gradient(315deg, rgba(8, 116, 67, 0.025) 25%, transparent 25%);
-        background-size: 24px 24px;
         font-family: "Aptos", "Segoe UI", sans-serif;
         font-size: 14px;
       }
@@ -46,19 +43,13 @@
         border-bottom: 1px solid var(--line);
       }
       .brand { display: flex; align-items: center; gap: 13px; }
-      .brand-mark {
-        width: 35px;
-        height: 35px;
-        display: grid;
-        place-items: center;
-        color: #fff;
-        background: var(--accent);
-        border-radius: 7px;
-        font-size: 17px;
-        font-weight: 800;
-      }
-      .brand-name { font-size: 14px; font-weight: 800; letter-spacing: 0.02em; }
-      .brand-subtitle { margin-top: 2px; color: var(--muted); font-size: 12px; }
+      .brand-logo { width: 42px; height: 42px; object-fit: contain; }
+      .developer-logo { width: 32px; height: 32px; object-fit: contain; }
+      .brand-name { font-size: 14px; font-weight: 800; }
+      .brand-subtitle { margin-top: 3px; color: var(--muted); font-size: 11px; }
+      .brand-credit { display: flex; align-items: center; gap: 7px; padding-left: 13px; border-left: 1px solid var(--line); }
+      .brand-credit span { color: var(--muted); font-size: 11px; line-height: 1.25; }
+      .brand-credit strong { display: block; color: var(--ink); font-size: 11px; }
       .admin-state { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
       .admin-dot { width: 8px; height: 8px; background: var(--good); border-radius: 50%; }
       .login-shell { width: min(450px, calc(100% - 32px)); margin: 70px auto; }
@@ -171,7 +162,11 @@
         .metric:nth-child(5) { border-left: 0; border-top: 1px solid var(--line); }
       }
       @media (max-width: 620px) {
-        .topbar { min-height: 60px; padding: 0 16px; }
+        .topbar { min-height: 60px; gap: 8px; padding: 0 12px; }
+        .brand { gap: 7px; }
+        .brand-logo { width: 34px; height: 34px; }
+        .brand-name { font-size: 12px; }
+        #admin-label { display: none; }
         main { width: calc(100% - 32px); margin-top: 24px; }
         .page-heading { align-items: start; flex-direction: column; }
         .metrics { margin-bottom: 24px; }
@@ -184,16 +179,23 @@
         .form-field.full { grid-column: auto; }
         .form-actions { flex-direction: column-reverse; }
         .form-actions button { width: 100%; }
+        .brand-credit { gap: 4px; padding-left: 8px; }
+        .brand-credit span { font-size: 10px; }
+        .developer-logo { width: 23px; height: 23px; }
       }
     </style>
   </head>
   <body>
     <header class="topbar">
       <div class="brand">
-        <div class="brand-mark" aria-hidden="true">D</div>
+        <img class="brand-logo" src="/assets/pw_logo.jpeg" alt="Print Wallah logo">
         <div>
-          <div class="brand-name">DEVELOPERS</div>
-          <div class="brand-subtitle">Print Wallah control</div>
+          <div class="brand-name">PRINT WALLAH</div>
+          <div class="brand-subtitle">Super-admin control</div>
+        </div>
+        <div class="brand-credit">
+          <img class="developer-logo" src="/assets/developers-logo_nobg.webp" alt="DEVELOPERS logo">
+          <span>Powered by<strong>DEVELOPERS</strong></span>
         </div>
       </div>
       <div class="admin-state">
