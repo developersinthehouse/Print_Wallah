@@ -1,3 +1,5 @@
+const crypto = require('node:crypto');
+
 function mapShop(row) {
   if (!row) return null;
   return {
@@ -5,6 +7,7 @@ function mapShop(row) {
     shopName: row.shop_name,
     ownerName: row.owner_name,
     ownerEmail: row.owner_email,
+    upiVpa: row.upi_vpa,
     rates: {
       blackAndWhitePerPage: Number(row.black_and_white_per_page),
       colorPerPage: Number(row.color_per_page),
@@ -24,9 +27,14 @@ function mapJob(row) {
     fileUrl: row.file_url,
     pageCount: row.page_count,
     totalAmount: Number(row.total_amount),
-    status: row.status,
+    status: row.payment_status === 'PENDING'
+      ? 'AWAITING_PAYMENT'
+      : row.payment_status === 'EXPIRED' ? 'PAYMENT_EXPIRED' : row.status,
+    copies: row.copies || 1,
+    colorMode: row.color_mode,
     error: row.print_error,
     createdAt: row.created_at,
+    expiresAt: row.expires_at,
   };
 }
 
@@ -66,7 +74,7 @@ function createPostgresRepositories(pool) {
 
     async getShopSettings(shopId) {
       const result = await pool.query(
-        `SELECT black_and_white_per_page, color_per_page, upi_id
+        `SELECT black_and_white_per_page, color_per_page, upi_vpa
          FROM shop_profiles WHERE id = $1`,
         [shopId],
       );
@@ -76,20 +84,17 @@ function createPostgresRepositories(pool) {
           blackAndWhitePerPage: Number(row.black_and_white_per_page),
           colorPerPage: Number(row.color_per_page),
         },
-        upiId: row.upi_id || '',
+        upiId: row.upi_vpa || '',
       } : null;
     },
 
-    async updateShopSettings(shopId, settings) {
+    async updateShopSettings(shopId, { rates, upiId }) {
       const result = await pool.query(
         `UPDATE shop_profiles
-         SET black_and_white_per_page = $2,
-             color_per_page = $3,
-             upi_id = $4,
-             updated_at = NOW()
+         SET black_and_white_per_page = $2, color_per_page = $3, upi_vpa = $4, updated_at = NOW()
          WHERE id = $1
-         RETURNING black_and_white_per_page, color_per_page, upi_id`,
-        [shopId, settings.rates.blackAndWhitePerPage, settings.rates.colorPerPage, settings.upiId],
+         RETURNING black_and_white_per_page, color_per_page, upi_vpa`,
+        [shopId, rates.blackAndWhitePerPage, rates.colorPerPage, upiId],
       );
       const row = result.rows[0];
       return row ? {
@@ -97,7 +102,7 @@ function createPostgresRepositories(pool) {
           blackAndWhitePerPage: Number(row.black_and_white_per_page),
           colorPerPage: Number(row.color_per_page),
         },
-        upiId: row.upi_id || '',
+        upiId: row.upi_vpa || '',
       } : null;
     },
 
@@ -219,6 +224,68 @@ function createPostgresRepositories(pool) {
   };
 
   const printJobRepository = {
+    async createCustomerOrder(order) {
+      const result = await pool.query(
+        `INSERT INTO print_jobs
+          (id, shop_id, document_name, file_name, file_url, page_count, total_amount,
+           status, created_at, copies, color_mode, storage_key, expires_at, payment_status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'READY_TO_PRINT', $8, $9, $10, $11, $12, 'PENDING')
+         RETURNING *`,
+        [
+          order.id, order.shopId, order.documentName, order.fileName, order.fileUrl,
+          order.pageCount, order.totalAmount, order.createdAt, order.copies,
+          order.colorMode, order.storageKey, order.expiresAt,
+        ],
+      );
+      return mapJob(result.rows[0]);
+    },
+
+    async confirmCustomerPayment(shopId, jobId, paymentReference) {
+      const updated = await pool.query(
+        `UPDATE print_jobs
+         SET payment_status = 'CONFIRMED', payment_reference = $3, payment_confirmed_at = NOW()
+         WHERE shop_id = $1 AND id = $2 AND payment_status = 'PENDING' AND expires_at > NOW()
+         RETURNING *`,
+        [shopId, jobId, paymentReference],
+      );
+      if (updated.rowCount > 0) return { job: mapJob(updated.rows[0]), confirmed: true };
+
+      const existing = await pool.query(
+        'SELECT * FROM print_jobs WHERE shop_id = $1 AND id = $2',
+        [shopId, jobId],
+      );
+      return existing.rowCount > 0
+        ? { job: mapJob(existing.rows[0]), confirmed: false }
+        : null;
+    },
+
+    async getFileForAgent(shopId, jobId) {
+      const result = await pool.query(
+        `SELECT storage_key, file_name FROM print_jobs
+         WHERE shop_id = $1 AND id = $2 AND status = 'READY_TO_PRINT' AND payment_status = 'CONFIRMED'`,
+        [shopId, jobId],
+      );
+      return result.rows[0] || null;
+    },
+
+    async expireAwaitingPayment(now) {
+      const result = await pool.query(
+        `UPDATE print_jobs SET payment_status = 'EXPIRED'
+         WHERE payment_status = 'PENDING' AND expires_at <= $1
+         RETURNING storage_key`,
+        [now],
+      );
+      return result.rows.map((row) => row.storage_key).filter(Boolean);
+    },
+
+    async listActiveCustomerFiles() {
+      const result = await pool.query(
+        `SELECT storage_key FROM print_jobs
+         WHERE status = 'READY_TO_PRINT' AND payment_status IN ('PENDING', 'CONFIRMED') AND storage_key IS NOT NULL`,
+      );
+      return result.rows.map((row) => row.storage_key);
+    },
+
     async getSummary(shopId, { from, to }) {
       const result = await pool.query(
         `SELECT COUNT(CASE WHEN status = 'PRINTED' THEN id END)::int AS total_prints,
@@ -245,8 +312,15 @@ function createPostgresRepositories(pool) {
         conditions.push(`created_at < $${values.length}`);
       }
       if (status) {
-        values.push(status);
-        conditions.push(`status = $${values.length}`);
+        if (status === 'AWAITING_PAYMENT') {
+          conditions.push(`payment_status = 'PENDING'`);
+        } else if (status === 'PAYMENT_EXPIRED') {
+          conditions.push(`payment_status = 'EXPIRED'`);
+        } else {
+          values.push(status);
+          conditions.push(`status = $${values.length}`);
+          if (status === 'READY_TO_PRINT') conditions.push(`payment_status = 'CONFIRMED'`);
+        }
       }
       const whereClause = conditions.join(' AND ');
       const countResult = await pool.query(
@@ -268,7 +342,8 @@ function createPostgresRepositories(pool) {
          SET status = $3,
              print_error = $4,
              printed_at = CASE WHEN $3 = 'PRINTED' THEN COALESCE(printed_at, NOW()) ELSE printed_at END
-         WHERE shop_id = $1 AND id = $2 AND (status = 'READY_TO_PRINT' OR status = $3)
+         WHERE shop_id = $1 AND id = $2
+           AND ((status = 'READY_TO_PRINT' AND payment_status = 'CONFIRMED') OR status = $3)
          RETURNING *`,
         [shopId, jobId, status, error || null],
       );
@@ -287,26 +362,74 @@ function createPostgresRepositories(pool) {
     },
   };
 
+  const agentTokenRepository = {
+    async create({ id, shopId, label, tokenHash, createdAt, expiresAt }) {
+      const result = await pool.query(
+        `INSERT INTO shop_agent_tokens (id, shop_id, label, token_hash, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id, shop_id, label, created_at, expires_at, last_used_at`,
+        [id, shopId, label, tokenHash, createdAt, expiresAt],
+      );
+      return result.rows[0];
+    },
+
+    async findActiveByHash(tokenHash, now = new Date()) {
+      const result = await pool.query(
+        `UPDATE shop_agent_tokens
+         SET last_used_at = $2
+         WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > $2
+         RETURNING id, shop_id, expires_at`,
+        [tokenHash, now],
+      );
+      return result.rows[0] || null;
+    },
+
+    async listForShop(shopId) {
+      const result = await pool.query(
+        `SELECT id, label, created_at, expires_at, last_used_at
+         FROM shop_agent_tokens
+         WHERE shop_id = $1 AND revoked_at IS NULL AND expires_at > NOW()
+         ORDER BY created_at DESC`,
+        [shopId],
+      );
+      return result.rows;
+    },
+
+    async revoke(shopId, tokenId, revokedAt = new Date()) {
+      const result = await pool.query(
+        `UPDATE shop_agent_tokens SET revoked_at = $3
+         WHERE shop_id = $1 AND id = $2 AND revoked_at IS NULL
+         RETURNING id`,
+        [shopId, tokenId, revokedAt],
+      );
+      return result.rowCount > 0;
+    },
+  };
+
   const adminRepository = {
-    async createShopWithAudit({ shop, audit, shopAdminSetupTokenHash, shopAdminSetupExpiresAt }) {
+    async createShopWithAudit({ shop, shopAdmin, audit }) {
       return withTransaction(pool, async (client) => {
         const inserted = await client.query(
           `INSERT INTO shop_profiles
-            (id, shop_name, owner_name, owner_email, black_and_white_per_page, color_per_page,
+            (id, shop_name, owner_name, owner_email, upi_vpa, black_and_white_per_page, color_per_page,
              subscription_expiry_date, subscription_status, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
            RETURNING *`,
           [
-            shop.id, shop.shopName, shop.ownerName, shop.ownerEmail,
+            shop.id, shop.shopName, shop.ownerName, shop.ownerEmail, shop.upiVpa || '',
             shop.rates.blackAndWhitePerPage, shop.rates.colorPerPage,
             shop.subscription_expiry_date, shop.subscription_status, shop.createdAt,
           ],
         );
-        if (shopAdminSetupTokenHash && shopAdminSetupExpiresAt) {
+        if (shopAdmin) {
           await client.query(
-            `INSERT INTO shop_admin_credentials (shop_id, setup_token_hash, setup_expires_at)
-             VALUES ($1, $2, $3)`,
-            [shop.id, shopAdminSetupTokenHash, shopAdminSetupExpiresAt],
+            `INSERT INTO shop_admin_users
+              (id, shop_id, email, password_hash, setup_token_hash, setup_expires_at, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [
+              crypto.randomUUID(), shop.id, shopAdmin.email, shopAdmin.passwordHash || null,
+              shopAdmin.setupTokenHash || null, shopAdmin.setupExpiresAt || null, shop.createdAt,
+            ],
           );
         }
         await insertAudit(client, audit);
@@ -343,7 +466,7 @@ function createPostgresRepositories(pool) {
     },
   };
 
-  return { shopRepository, printJobRepository, adminRepository };
+  return { shopRepository, printJobRepository, agentTokenRepository, adminRepository };
 }
 
 async function insertAudit(client, audit) {

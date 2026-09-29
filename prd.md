@@ -1,19 +1,18 @@
-# Project Requirements Document: Stream 2 (Shop Agent, Subscription Engine & Super Admin)
-**Project:** Print Wallah (Powered by DEVELOPERS)  
-**Scope:** Python background desktop print agent, shopkeeper pricing/management dashboard, automated subscription expiration & locking middleware, and DEVELOPERS master super admin panel.
+# Project Requirements Document: Stream 1 (Customer Portal & Payment Flow)
+**Project:** Print-on-Go (Powered by DEVELOPERS)
+**Scope:** Mobile-first customer web portal, multi-format file upload pipeline, dynamic pricing calculator, direct merchant UPI intent integration, and automatic print queue triggering.
 
 ## Core Features & Requirements
-1. **Python Desktop Print Agent (`agent.py`):**
-   - Background polling service running on the shopkeeper's Windows PC.
-   - Secure fetching of `READY_TO_PRINT` jobs via `shopId`.
-   - Automatic execution of Windows local printer commands without manual user intervention.
-2. **Shopkeeper Management Dashboard:**
-   - Interface for individual shop admins to configure custom local rates (B&W vs. Full Color price per page).
-   - Live analytics viewing (daily print counts and transaction history).
-3. **Automated Subscription & Locking Engine:**
-   - Backend middleware/cron monitoring `subscription_expiry_date` for each registered shop.
-   - Automatic locking mechanism: Blocks shop dashboard and pauses desktop print agent upon validity expiration.
-   - Self-service online renewal workflow that instantly reactivates shop access upon payment verification.
-4. **DEVELOPERS Super Admin Panel:**
-   - Master dashboard for onboarding new shops and generating unique dynamic QR codes.
-   - Global system overview tracking total active subscriptions, expired accounts, and aggregate platform volume.
+1. **Dynamic QR Landing Page:** When a customer scans a shop QR code (`/shop/{shopId}`), they access a mobile-optimized upload portal tied specifically to that shop's configuration and VPA.
+2. **Secure Document Uploader:** Support for uploading PDF documents and standard image formats (`.png`, `.jpg`, `.jpeg`) with automatic file size and format validation.
+3. **Interactive Print Configuration UI:**
+   - Dropdown for Print Type (Black & White vs. Full Color) using the specific shop's pre-configured rates.
+   - Number of copies counter.
+   - Real-time total cost calculation.
+4. **Direct Merchant UPI Intent Integration:**
+   - Dynamic generation of `upi://pay` deep-links containing the shop's VPA, exact calculated amount, and unique order note.
+   - One-tap redirection to the customer's default UPI application (Google Pay, PhonePe, Paytm).
+5. **Payment Callback & Print State Trigger:**
+   - Post-payment redirection handling with a verification state.
+   - Backend endpoint to update order status to `READY_TO_PRINT` upon successful intent callback execution.
+6. **Strict Data Privacy & Auto-Purge:** Automatic deletion of uploaded customer files from server storage (`/uploads`) immediately following successful print fulfillment or session expiry.

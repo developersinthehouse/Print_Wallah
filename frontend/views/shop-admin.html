@@ -1,559 +1,1067 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#f2f5f8">
-    <title>Shop operations | Print Wallah</title>
-    <style>
-      :root {
-        color-scheme: light;
-        --ink: #17212b;
-        --muted: #64717d;
-        --line: #dce3e8;
-        --surface: #ffffff;
-        --canvas: #f2f5f8;
-        --accent: #b3261e;
-        --accent-dark: #842018;
-        --payment: #087443;
-        --good: #087443;
-        --bad: #b42318;
-        --focus: #a5b4fc;
-      }
 
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        color: var(--ink);
-        background-color: var(--canvas);
-        font-family: "Aptos", "Segoe UI", sans-serif;
-        font-size: 14px;
-      }
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f2f5f8">
+  <title>Shop operations | Print Wallah</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17212b;
+      --muted: #64717d;
+      --line: #dce3e8;
+      --surface: #ffffff;
+      --canvas: #f2f5f8;
+      --accent: #4f46e5;
+      --accent-dark: #3730a3;
+      --good: #087443;
+      --bad: #b42318;
+      --focus: #a5b4fc;
+    }
 
-      button, input { font: inherit; }
-      button, input, a { -webkit-tap-highlight-color: transparent; }
-      :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background-color: var(--canvas);
+      background-image: linear-gradient(135deg, rgba(79, 70, 229, 0.035) 25%, transparent 25%),
+        linear-gradient(315deg, rgba(16, 116, 67, 0.025) 25%, transparent 25%);
+      background-size: 24px 24px;
+      font-family: "Aptos", "Segoe UI", sans-serif;
+      font-size: 14px;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button,
+    input,
+    a {
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    :focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    .topbar {
+      min-height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 0 max(24px, calc((100vw - 1240px) / 2));
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-logo {
+      width: 34px;
+      height: 34px;
+      object-fit: contain;
+    }
+
+    .developer-logo {
+      width: 30px;
+      height: 30px;
+      object-fit: contain;
+    }
+
+    .brand-name {
+      font-weight: 750;
+      letter-spacing: 0.02em;
+    }
+
+    .brand-subtitle {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .shop-label {
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .account-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .shop-login {
+      width: min(480px, calc(100% - 32px));
+      margin: 64px auto;
+      padding: 22px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+
+    .shop-login[hidden] {
+      display: none;
+    }
+
+    .shop-login h1 {
+      margin: 0 0 18px;
+      font-size: 22px;
+    }
+
+    .shop-login-form {
+      display: grid;
+      gap: 14px;
+    }
+
+    .shop-login-form[hidden] {
+      display: none;
+    }
+
+    .shop-auth-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 18px;
+    }
+
+    .shop-auth-tab[aria-selected="true"] {
+      color: var(--accent-dark);
+      border-color: var(--accent);
+    }
+
+    .shop-auth-description {
+      margin: -8px 0 18px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .shop-login-form label {
+      display: grid;
+      gap: 6px;
+      color: #33414d;
+      font-weight: 600;
+    }
+
+    .shop-login-form input {
+      width: 100%;
+    }
+
+    .subscription-lock {
+      width: min(1240px, calc(100% - 48px));
+      margin: 24px auto 0;
+      padding: 16px 18px;
+      color: #7f1d1d;
+      background: #fff1f1;
+      border: 1px solid #f2b8b5;
+      border-left: 4px solid var(--bad);
+      border-radius: 5px;
+      font-weight: 650;
+    }
+
+    .subscription-lock[hidden] {
+      display: none;
+    }
+
+    main {
+      width: min(1240px, calc(100% - 48px));
+      margin: 34px auto 56px;
+    }
+
+    .page-heading {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 27px;
+      line-height: 1.15;
+      font-weight: 700;
+    }
+
+    .date-label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    input {
+      min-height: 40px;
+      padding: 8px 10px;
+      color: var(--ink);
+      background: #fff;
+      border: 1px solid #cbd5dc;
+      border-radius: 5px;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      margin-bottom: 28px;
+      background: rgba(255, 255, 255, 0.8);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+
+    .metric {
+      min-height: 102px;
+      padding: 18px 22px;
+    }
+
+    .metric+.metric {
+      border-left: 1px solid var(--line);
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .metric-value {
+      margin-top: 10px;
+      font-size: 27px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .rates-section {
+      margin-bottom: 30px;
+    }
+
+    .section-heading {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      margin: 0 0 14px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 17px;
+      font-weight: 700;
+    }
+
+    .section-note {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .rate-form {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+      align-items: end;
+      gap: 16px;
+      padding: 18px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+
+    .rate-field {
+      display: grid;
+      gap: 7px;
+      color: #33414d;
+      font-weight: 600;
+    }
+
+    .input-wrap {
+      position: relative;
+    }
+
+    .currency {
+      position: absolute;
+      top: 11px;
+      left: 11px;
+      color: var(--muted);
+    }
+
+    .rate-input {
+      width: 100%;
+      padding-left: 27px;
+    }
+
+    .rate-field.full {
+      grid-column: 1 / -1;
+    }
+
+    .upi-field input {
+      width: 100%;
+    }
+
+    .upi-field small {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 400;
+    }
+
+    .primary-button {
+      min-height: 40px;
+      padding: 0 17px;
+      color: #fff;
+      background: var(--accent);
+      border: 1px solid var(--accent);
+      border-radius: 5px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    .primary-button:hover {
+      background: var(--accent-dark);
+    }
+
+    .primary-button:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    .feedback {
+      min-height: 20px;
+      margin: 8px 2px 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .feedback[data-kind="error"] {
+      color: var(--bad);
+    }
+
+    .feedback[data-kind="success"] {
+      color: var(--good);
+    }
+
+    .history-section {
+      border-top: 1px solid var(--line);
+      padding-top: 22px;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+
+    th,
+    td {
+      padding: 13px 16px;
+      border-bottom: 1px solid #e8edf0;
+      white-space: nowrap;
+    }
+
+    th {
+      color: var(--muted);
+      background: #f8fafb;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    td {
+      font-size: 13px;
+    }
+
+    tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .status::before {
+      width: 7px;
+      height: 7px;
+      content: "";
+      background: currentColor;
+      border-radius: 50%;
+    }
+
+    .status-printed {
+      color: var(--good);
+    }
+
+    .status-failed {
+      color: var(--bad);
+    }
+
+    .status-ready {
+      color: #945900;
+    }
+
+    .payment-button {
+      min-height: 32px;
+      margin-left: 10px;
+      padding: 0 9px;
+      color: #33414d;
+      background: #fff;
+      border: 1px solid #cbd5dc;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    .payment-button:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    .agent-token-form {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) auto;
+      align-items: end;
+      gap: 12px;
+      padding: 16px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .agent-token-list {
+      display: grid;
+    }
+
+    .agent-token-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 2px;
+      border-bottom: 1px solid #e8edf0;
+    }
+
+    .agent-token-row:last-child {
+      border-bottom: 0;
+    }
+
+    .agent-token-details {
+      min-width: 0;
+    }
+
+    .agent-token-label {
+      font-weight: 650;
+    }
+
+    .agent-token-meta {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .agent-token-secret {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .agent-token-secret code {
+      max-width: 100%;
+      overflow-wrap: anywhere;
+    }
+
+    .empty-cell {
+      padding: 32px 16px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .page-status {
+      min-height: 22px;
+      margin: 14px 0 0;
+      color: var(--muted);
+    }
+
+    .page-status[data-kind="error"] {
+      color: var(--bad);
+    }
+
+    @media (max-width: 700px) {
+      main {
+        width: min(100% - 32px, 1240px);
+        margin-top: 24px;
+      }
 
       .topbar {
-        min-height: 68px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 24px;
-        padding: 0 max(24px, calc((100vw - 1240px) / 2));
-        background: var(--surface);
-        border-bottom: 1px solid var(--line);
+        min-height: 60px;
+        padding: 0 16px;
       }
-      .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
-      .brand-logo { width: 42px; height: 42px; object-fit: contain; }
-      .developer-logo { width: 32px; height: 32px; object-fit: contain; }
-      .brand-name { font-weight: 800; }
-      .brand-subtitle { margin-top: 3px; color: var(--muted); font-size: 11px; }
-      .brand-credit { display: flex; align-items: center; gap: 7px; padding-left: 13px; border-left: 1px solid var(--line); }
-      .brand-credit span { color: var(--muted); font-size: 11px; line-height: 1.25; }
-      .brand-credit strong { display: block; color: var(--ink); font-size: 11px; }
-      .shop-label { color: var(--muted); white-space: nowrap; }
-      .auth-shell { width: min(480px, calc(100% - 32px)); margin: 54px auto; }
-      .auth-panel { padding: 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; }
-      .auth-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 18px; padding: 4px; background: #edf1f4; border-radius: 5px; }
-      .auth-tab { min-height: 36px; border: 0; border-radius: 4px; color: var(--muted); background: transparent; cursor: pointer; font-weight: 650; }
-      .auth-tab[aria-selected="true"] { color: var(--ink); background: #fff; box-shadow: 0 1px 3px rgba(23, 33, 43, 0.12); }
-      .auth-title { margin: 0 0 7px; font-size: 22px; }
-      .auth-description { margin: 0 0 18px; color: var(--muted); line-height: 1.5; }
-      .auth-form { display: grid; gap: 13px; }
-      .auth-field { display: grid; gap: 6px; color: #33414d; font-size: 12px; font-weight: 650; }
-      .auth-field input { width: 100%; }
-      .auth-form[hidden] { display: none; }
-      .auth-submit { width: 100%; }
-      .signout-button { min-height: 36px; padding: 0 12px; color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; }
-      .signout-button[hidden] { display: none; }
-      main[hidden], .auth-shell[hidden] { display: none; }
-      .subscription-lock {
-        width: min(1240px, calc(100% - 48px));
-        margin: 24px auto 0;
-        padding: 16px 18px;
-        color: #7f1d1d;
-        background: #fff1f1;
-        border: 1px solid #f2b8b5;
-        border-left: 4px solid var(--bad);
-        border-radius: 5px;
-        font-weight: 650;
-      }
-      .subscription-lock[hidden] { display: none; }
 
-      main { width: min(1240px, calc(100% - 48px)); margin: 34px auto 56px; }
-      .page-heading {
-        display: flex;
-        align-items: end;
-        justify-content: space-between;
-        gap: 20px;
-        margin-bottom: 24px;
+      .developer-logo {
+        width: 24px;
+        height: 24px;
       }
-      h1 { margin: 0; font-size: 27px; line-height: 1.15; font-weight: 700; }
-      .date-label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
-      input {
-        min-height: 40px;
-        padding: 8px 10px;
-        color: var(--ink);
-        background: #fff;
-        border: 1px solid #cbd5dc;
-        border-radius: 5px;
+
+      .subscription-lock {
+        width: calc(100% - 32px);
+        margin-top: 16px;
+      }
+
+      .page-heading {
+        align-items: start;
+        flex-direction: column;
+        margin-bottom: 18px;
       }
 
       .metrics {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        margin-bottom: 28px;
-        background: rgba(255, 255, 255, 0.8);
-        border: 1px solid var(--line);
-        border-radius: 6px;
+        margin-bottom: 24px;
       }
-      .metric { min-height: 102px; padding: 18px 22px; }
-      .metric + .metric { border-left: 1px solid var(--line); }
-      .metric-label { color: var(--muted); font-size: 12px; font-weight: 650; }
-      .metric-value { margin-top: 10px; font-size: 27px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
-      .rates-section { margin-bottom: 30px; }
-      .section-heading {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        gap: 16px;
-        margin: 0 0 14px;
+      .metric {
+        min-height: 88px;
+        padding: 15px;
       }
-      h2 { margin: 0; font-size: 17px; font-weight: 700; }
-      .section-note { color: var(--muted); font-size: 12px; }
+
+      .metric-value {
+        font-size: 23px;
+      }
+
       .rate-form {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(180px, 1fr));
-        align-items: end;
-        gap: 16px;
-        padding: 18px;
-        background: var(--surface);
-        border: 1px solid var(--line);
-        border-radius: 6px;
+        grid-template-columns: 1fr;
+        gap: 13px;
       }
-      .rate-field { display: grid; gap: 7px; color: #33414d; font-weight: 600; }
-      .rate-field.full { grid-column: 1 / -1; }
-      .rate-field small { color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.4; }
-      .rate-field input { width: 100%; }
-      .upi-field { border-left: 3px solid var(--payment); padding-left: 12px; }
-      .input-wrap { position: relative; }
-      .currency { position: absolute; top: 11px; left: 11px; color: var(--muted); }
-      .rate-input { width: 100%; padding-left: 27px; }
+
       .primary-button {
-        min-height: 40px;
-        padding: 0 17px;
-        color: #fff;
-        background: var(--accent);
-        border: 1px solid var(--accent);
-        border-radius: 5px;
-        font-weight: 650;
-        cursor: pointer;
+        width: 100%;
       }
-      .primary-button:hover { background: var(--accent-dark); }
-      .primary-button:disabled { opacity: 0.6; cursor: wait; }
-      .rate-form .primary-button { grid-column: 1 / -1; justify-self: end; }
-      .feedback { min-height: 20px; margin: 8px 2px 0; color: var(--muted); font-size: 12px; }
-      .feedback[data-kind="error"] { color: var(--bad); }
-      .feedback[data-kind="success"] { color: var(--good); }
 
-      .history-section { border-top: 1px solid var(--line); padding-top: 25px; }
-      .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
-      table { width: 100%; border-collapse: collapse; text-align: left; }
-      th, td { padding: 13px 16px; border-bottom: 1px solid #e8edf0; white-space: nowrap; }
-      th { color: var(--muted); background: #f8fafb; font-size: 11px; font-weight: 700; text-transform: uppercase; }
-      td { font-size: 13px; }
-      tbody tr:last-child td { border-bottom: 0; }
-      .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 650; }
-      .status::before { width: 7px; height: 7px; content: ""; background: currentColor; border-radius: 50%; }
-      .status-printed { color: var(--good); }
-      .status-failed { color: var(--bad); }
-      .status-ready { color: #945900; }
-      .empty-cell { padding: 32px 16px; color: var(--muted); text-align: center; }
-      .page-status { min-height: 22px; margin: 14px 0 0; color: var(--muted); }
-      .page-status[data-kind="error"] { color: var(--bad); }
-
-      @media (max-width: 700px) {
-        main { width: min(100% - 32px, 1240px); margin-top: 24px; }
-        .topbar { min-height: 60px; gap: 8px; padding: 0 12px; }
-        .brand { gap: 7px; }
-        .brand-logo { width: 34px; height: 34px; }
-        .brand-name { font-size: 12px; }
-        .shop-label { display: none; }
-        .subscription-lock { width: calc(100% - 32px); margin-top: 16px; }
-        .page-heading { align-items: start; flex-direction: column; margin-bottom: 18px; }
-        .metrics { margin-bottom: 24px; }
-        .metric { min-height: 88px; padding: 15px; }
-        .metric-value { font-size: 23px; }
-        .rate-form { grid-template-columns: 1fr; gap: 13px; }
-        .rate-field.full, .rate-form .primary-button { grid-column: auto; }
-        .rate-form .primary-button { width: 100%; }
-        .section-heading { align-items: start; flex-direction: column; }
-        .brand-credit { gap: 4px; padding-left: 8px; }
-        .brand-credit span { font-size: 10px; }
-        .developer-logo { width: 23px; height: 23px; }
+      .section-heading {
+        align-items: start;
+        flex-direction: column;
       }
-    </style>
-  </head>
-  <body>
-    <header class="topbar">
-      <div class="brand">
-        <img class="brand-logo" src="/assets/pw_logo.jpeg" alt="Print Wallah logo">
-        <div>
-          <div class="brand-name">PRINT WALLAH</div>
-          <div class="brand-subtitle">Shop operations</div>
-        </div>
-        <div class="brand-credit">
-          <img class="developer-logo" src="/assets/developers-logo_nobg.webp" alt="DEVELOPERS logo">
-          <span>Powered by<strong>DEVELOPERS</strong></span>
-        </div>
+
+      .agent-token-form {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img class="brand-logo" src="/assets/pw_logo.jpeg" alt="Print Wallah logo">
+      <div>
+        <div class="brand-name">PRINT WALLAH</div>
+        <div class="brand-subtitle">Powered by DEVELOPERS</div>
       </div>
+      <img class="developer-logo" src="/assets/developers-logo_nobg.webp" alt="DEVELOPERS logo">
+    </div>
+    <div class="account-actions">
       <div id="shop-label" class="shop-label">Shop operations</div>
-      <button id="shop-signout" class="signout-button" type="button" hidden>Sign out</button>
-    </header>
-    <div id="subscription-lock" class="subscription-lock" role="alert" hidden>
-      Subscription expired. Dashboard and print-agent access are paused until renewal is confirmed.
+      <button id="sign-out-button" class="quiet-button" type="button" hidden>Sign out</button>
+    </div>
+  </header>
+  <div id="subscription-lock" class="subscription-lock" role="alert" hidden>
+    Subscription expired. Dashboard and print-agent access are paused until renewal is confirmed.
+  </div>
+
+  <section id="shop-login" class="shop-login" aria-labelledby="shop-login-heading" hidden>
+    <div class="shop-auth-tabs" role="tablist" aria-label="Shop account access">
+      <button id="shop-login-tab" class="quiet-button shop-auth-tab" type="button" role="tab" aria-selected="true">Sign
+        in</button>
+      <button id="shop-setup-tab" class="quiet-button shop-auth-tab" type="button" role="tab" aria-selected="false">Set
+        up account</button>
+    </div>
+    <h1 id="shop-login-heading">Shop sign in</h1>
+    <p id="shop-auth-description" class="shop-auth-description">Sign in with your shop ID, owner email, and password.
+    </p>
+    <form id="shop-login-form" class="shop-login-form">
+      <label>Shop ID<input name="shopId" autocomplete="organization" required></label>
+      <label>Email<input name="email" type="email" autocomplete="username" required></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <button id="shop-login-submit" class="primary-button" type="submit">Sign in</button>
+    </form>
+    <form id="shop-setup-form" class="shop-login-form" hidden>
+      <label>Shop ID<input name="shopId" autocomplete="organization" required></label>
+      <label>Owner email<input name="email" type="email" autocomplete="email" maxlength="254" required></label>
+      <label>One-time setup code<input name="setupToken" autocomplete="one-time-code" required></label>
+      <label>Create password<input name="password" type="password" autocomplete="new-password" minlength="12"
+          maxlength="1024" required></label>
+      <button id="shop-setup-submit" class="primary-button" type="submit">Activate shop account</button>
+    </form>
+    <p id="shop-login-feedback" class="feedback" role="status" aria-live="polite"></p>
+  </section>
+
+  <main id="shop-main" hidden>
+    <div class="page-heading">
+      <h1>Shop operations</h1>
+      <label class="date-label" for="history-date">
+        Activity date
+        <input id="history-date" type="date">
+      </label>
     </div>
 
-    <section id="shop-auth-panel" class="auth-shell" aria-labelledby="shop-auth-title" hidden>
-      <div class="auth-panel">
-        <div class="auth-tabs" role="tablist" aria-label="Shop account access">
-          <button id="shop-login-tab" class="auth-tab" type="button" role="tab" aria-selected="true">Sign in</button>
-          <button id="shop-setup-tab" class="auth-tab" type="button" role="tab" aria-selected="false">Set up account</button>
-        </div>
-        <h1 id="shop-auth-title" class="auth-title">Shop account</h1>
-        <p id="shop-auth-description" class="auth-description">Sign in with the shop ID, owner email, and password.</p>
-        <form id="shop-login-form" class="auth-form">
-          <label class="auth-field">Shop ID<input name="shopId" autocomplete="organization" required></label>
-          <label class="auth-field">Owner email<input name="email" type="email" autocomplete="username" maxlength="254" required></label>
-          <label class="auth-field">Password<input name="password" type="password" autocomplete="current-password" required></label>
-          <button class="primary-button auth-submit" type="submit">Sign in</button>
-        </form>
-        <form id="shop-setup-form" class="auth-form" hidden>
-          <label class="auth-field">Shop ID<input name="shopId" autocomplete="organization" required></label>
-          <label class="auth-field">Owner email<input name="email" type="email" autocomplete="email" maxlength="254" required></label>
-          <label class="auth-field">One-time setup code<input name="setupToken" autocomplete="one-time-code" required></label>
-          <label class="auth-field">Create password<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" required></label>
-          <button class="primary-button auth-submit" type="submit">Activate shop account</button>
-        </form>
-        <p id="shop-auth-feedback" class="feedback" role="status" aria-live="polite"></p>
+    <section class="metrics" aria-label="Daily summary">
+      <div class="metric">
+        <div class="metric-label">PRINTS ON SELECTED DAY</div>
+        <div id="print-count" class="metric-value" aria-live="polite">--</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">PRINT REVENUE</div>
+        <div id="print-revenue" class="metric-value" aria-live="polite">--</div>
       </div>
     </section>
 
-    <main id="shop-dashboard" hidden>
-      <div class="page-heading">
-        <h1>Shop operations</h1>
-        <label class="date-label" for="history-date">
-          Activity date
-          <input id="history-date" type="date">
-        </label>
+    <section class="rates-section" aria-labelledby="rates-heading">
+      <div class="section-heading">
+        <h2 id="rates-heading">Page rates</h2>
+        <span class="section-note">Prices apply to new print orders.</span>
       </div>
+      <form id="rates-form" class="rate-form">
+        <label class="rate-field" for="bw-rate">
+          Black &amp; white, per page
+          <span class="input-wrap"><span class="currency" aria-hidden="true">₹</span><input id="bw-rate"
+              class="rate-input" type="number" min="0" max="100000" step="0.01" required></span>
+        </label>
+        <label class="rate-field" for="color-rate">
+          Full color, per page
+          <span class="input-wrap"><span class="currency" aria-hidden="true">₹</span><input id="color-rate"
+              class="rate-input" type="number" min="0" max="100000" step="0.01" required></span>
+        </label>
+        <label class="rate-field full upi-field" for="upi-id">
+          UPI ID for customer payments
+          <input id="upi-id" type="text" maxlength="255" autocomplete="off" placeholder="shopname@bank">
+          <small>Customers use this UPI ID to pay for print orders.</small>
+        </label>
+        <button id="save-rates" class="primary-button" type="submit">Save shop settings</button>
+      </form>
+      <p id="rate-feedback" class="feedback" role="status" aria-live="polite"></p>
+    </section>
 
-      <section class="metrics" aria-label="Daily summary">
-        <div class="metric">
-          <div class="metric-label">PRINTS ON SELECTED DAY</div>
-          <div id="print-count" class="metric-value" aria-live="polite">--</div>
-        </div>
-        <div class="metric">
-          <div class="metric-label">PRINT REVENUE</div>
-          <div id="print-revenue" class="metric-value" aria-live="polite">--</div>
-        </div>
-      </section>
+    <section class="rates-section" aria-labelledby="agent-heading">
+      <div class="section-heading">
+        <h2 id="agent-heading">Print agent access</h2>
+        <span class="section-note">Create one revocable token per shop computer.</span>
+      </div>
+      <form id="agent-token-form" class="agent-token-form">
+        <label class="rate-field" for="agent-token-label">Computer label
+          <input id="agent-token-label" type="text" minlength="2" maxlength="80" autocomplete="off" required>
+        </label>
+        <button id="create-agent-token" class="primary-button" type="submit">Create agent token</button>
+      </form>
+      <p id="agent-token-feedback" class="feedback" role="status" aria-live="polite"></p>
+      <div id="agent-token-secret" class="agent-token-secret" hidden>
+        <code id="agent-token-value"></code>
+        <button id="copy-agent-token" class="quiet-button" type="button">Copy token</button>
+      </div>
+      <div id="agent-token-list" class="agent-token-list" aria-live="polite"></div>
+    </section>
 
-      <section class="rates-section" aria-labelledby="settings-heading">
-        <div class="section-heading">
-          <h2 id="settings-heading">Shop settings</h2>
-          <span class="section-note">Rates and customer payment details</span>
-        </div>
-        <form id="rates-form" class="rate-form">
-          <label class="rate-field" for="bw-rate">
-            Black &amp; white, per page
-            <span class="input-wrap"><span class="currency" aria-hidden="true">₹</span><input id="bw-rate" class="rate-input" type="number" min="0" max="100000" step="0.01" required></span>
-          </label>
-          <label class="rate-field" for="color-rate">
-            Full color, per page
-            <span class="input-wrap"><span class="currency" aria-hidden="true">₹</span><input id="color-rate" class="rate-input" type="number" min="0" max="100000" step="0.01" required></span>
-          </label>
-          <label class="rate-field full upi-field" for="upi-id">
-            UPI ID for customer payments
-            <input id="upi-id" type="text" maxlength="255" autocomplete="off" placeholder="shopname@bank">
-            <small>Example: printshop@oksbi. The customer checkout can display this after its payment integration is connected.</small>
-          </label>
-          <button id="save-rates" class="primary-button" type="submit">Save shop settings</button>
-        </form>
-        <p id="rate-feedback" class="feedback" role="status" aria-live="polite"></p>
-      </section>
+    <section class="history-section" aria-labelledby="history-heading">
+      <div class="section-heading">
+        <h2 id="history-heading">Print history</h2>
+        <span class="section-note">Latest jobs for the selected date</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Document</th>
+              <th>Time</th>
+              <th>Pages</th>
+              <th>Amount</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="history-body">
+            <tr>
+              <td class="empty-cell" colspan="5">Loading print history...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <p id="page-status" class="page-status" role="status" aria-live="polite"></p>
+  </main>
 
-      <section class="history-section" aria-labelledby="history-heading">
-        <div class="section-heading">
-          <h2 id="history-heading">Print history</h2>
-          <span class="section-note">Latest jobs for the selected date</span>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Document</th><th>Time</th><th>Pages</th><th>Amount</th><th>Status</th></tr></thead>
-            <tbody id="history-body"><tr><td class="empty-cell" colspan="5">Loading print history...</td></tr></tbody>
-          </table>
-        </div>
-      </section>
-      <p id="page-status" class="page-status" role="status" aria-live="polite"></p>
-    </main>
+  <script>
+    let shopId = sessionStorage.getItem('printWallahShopId') || new URLSearchParams(window.location.search).get('shopId');
+    let accessToken = sessionStorage.getItem('printWallahAccessToken');
+    const apiBase = (sessionStorage.getItem('printWallahApiBase') || '').replace(/\/$/, '');
+    const loginPanel = document.getElementById('shop-login');
+    const shopMain = document.getElementById('shop-main');
+    const loginFeedback = document.getElementById('shop-login-feedback');
+    const dateInput = document.getElementById('history-date');
+    const pageStatus = document.getElementById('page-status');
+    const historyBody = document.getElementById('history-body');
+    const rateFeedback = document.getElementById('rate-feedback');
+    const agentTokenFeedback = document.getElementById('agent-token-feedback');
+    const agentTokenList = document.getElementById('agent-token-list');
+    const money = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' });
 
-    <script>
-      let shopId = sessionStorage.getItem('printWallahShopId');
-      let accessToken = sessionStorage.getItem('printWallahAccessToken');
-      const apiBase = (sessionStorage.getItem('printWallahApiBase') || '').replace(/\/$/, '');
-      const dateInput = document.getElementById('history-date');
-      const pageStatus = document.getElementById('page-status');
-      const historyBody = document.getElementById('history-body');
-      const rateFeedback = document.getElementById('rate-feedback');
-      const authPanel = document.getElementById('shop-auth-panel');
-      const dashboard = document.getElementById('shop-dashboard');
-      const authFeedback = document.getElementById('shop-auth-feedback');
-      const money = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' });
+    function localDateString(date) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
 
-      function localDateString(date) {
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
+    function rangeForDate(dateString) {
+      const [year, month, day] = dateString.split('-').map(Number);
+      const from = new Date(year, month - 1, day);
+      const to = new Date(year, month - 1, day + 1);
+      return { from: from.toISOString(), to: to.toISOString() };
+    }
+
+    function setStatus(element, message, kind) {
+      element.textContent = message;
+      element.dataset.kind = kind || '';
+    }
+
+    function setAuthMode(mode) {
+      const isLogin = mode === 'login';
+      document.getElementById('shop-login-tab').setAttribute('aria-selected', String(isLogin));
+      document.getElementById('shop-setup-tab').setAttribute('aria-selected', String(!isLogin));
+      document.getElementById('shop-login-form').hidden = !isLogin;
+      document.getElementById('shop-setup-form').hidden = isLogin;
+      document.getElementById('shop-login-heading').textContent = isLogin ? 'Shop sign in' : 'Activate shop account';
+      document.getElementById('shop-auth-description').textContent = isLogin
+        ? 'Sign in with your shop ID, owner email, and password.'
+        : 'Use the one-time setup code supplied by your shop administrator.';
+      setStatus(loginFeedback, '');
+    }
+
+    function showLogin(message = '') {
+      accessToken = null;
+      sessionStorage.removeItem('printWallahAccessToken');
+      loginPanel.hidden = false;
+      shopMain.hidden = true;
+      document.getElementById('sign-out-button').hidden = true;
+      setAuthMode('login');
+      if (shopId) {
+        document.querySelector('#shop-login-form [name="shopId"]').value = shopId;
+        document.querySelector('#shop-setup-form [name="shopId"]').value = shopId;
+      }
+      setStatus(loginFeedback, message, message ? 'error' : '');
+    }
+
+    async function apiRequest(path, options = {}) {
+      const response = await fetch(`${apiBase}${path}`, {
+        ...options,
+        headers: {
+          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+          Authorization: `Bearer ${accessToken}`,
+          ...options.headers,
+        },
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (response.status === 401) showLogin('Your session expired. Sign in again.');
+        const messages = {
+          SUBSCRIPTION_EXPIRED: 'This shop subscription has expired.',
+          SHOP_SCOPE_FORBIDDEN: 'Your account cannot access this shop.',
+          SHOP_NOT_FOUND: 'Shop was not found.',
+        };
+        const error = new Error(messages[body.error] || body.message || `Request failed (${response.status})`);
+        error.code = body.error;
+        throw error;
+      }
+      return body;
+    }
+
+    function renderHistory(jobs) {
+      historyBody.replaceChildren();
+      if (!jobs.length) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.className = 'empty-cell';
+        cell.colSpan = 5;
+        cell.textContent = 'No print jobs for this date.';
+        row.append(cell);
+        historyBody.append(row);
+        return;
       }
 
-      function rangeForDate(dateString) {
-        const [year, month, day] = dateString.split('-').map(Number);
-        const from = new Date(year, month - 1, day);
-        const to = new Date(year, month - 1, day + 1);
-        return { from: from.toISOString(), to: to.toISOString() };
-      }
-
-      function setStatus(element, message, kind) {
-        element.textContent = message;
-        element.dataset.kind = kind || '';
-      }
-
-      function clearShopSession() {
-        shopId = null;
-        accessToken = null;
-        sessionStorage.removeItem('printWallahShopId');
-        sessionStorage.removeItem('printWallahAccessToken');
-      }
-
-      function showShopAuth(message, kind) {
-        authPanel.hidden = false;
-        dashboard.hidden = true;
-        document.getElementById('shop-signout').hidden = true;
-        if (message) setStatus(authFeedback, message, kind);
-      }
-
-      function setAuthMode(mode) {
-        const isLogin = mode === 'login';
-        document.getElementById('shop-login-tab').setAttribute('aria-selected', String(isLogin));
-        document.getElementById('shop-setup-tab').setAttribute('aria-selected', String(!isLogin));
-        document.getElementById('shop-login-form').hidden = !isLogin;
-        document.getElementById('shop-setup-form').hidden = isLogin;
-        document.getElementById('shop-auth-title').textContent = isLogin ? 'Shop sign in' : 'Activate shop account';
-        document.getElementById('shop-auth-description').textContent = isLogin
-          ? 'Sign in with your shop ID, owner email, and password.'
-          : 'Use the one-time setup code supplied by your shop administrator.';
-        setStatus(authFeedback, '');
-      }
-
-      async function submitShopAuth(path, form) {
-        const button = form.querySelector('button[type="submit"]');
-        button.disabled = true;
-        setStatus(authFeedback, path === '/setup' ? 'Activating account…' : 'Signing in…');
-        try {
-          const formData = new FormData(form);
-          const response = await fetch(`${apiBase}/api/shop-auth${path}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(Object.fromEntries(formData.entries())),
-          });
-          const body = await response.json().catch(() => ({}));
-          if (!response.ok) {
-            const messages = {
-              INVALID_SHOP_CREDENTIALS: 'Shop ID, email, or password is incorrect.',
-              INVALID_SHOP_SETUP: 'Setup code is invalid or expired. Ask your administrator for a new code.',
-              SHOP_LOGIN_RATE_LIMITED: 'Too many attempts. Wait 15 minutes and try again.',
-            };
-            throw new Error(messages[body.error] || body.error || `Request failed (${response.status})`);
-          }
-          shopId = body.shopId;
-          accessToken = body.accessToken;
-          sessionStorage.setItem('printWallahShopId', shopId);
-          sessionStorage.setItem('printWallahAccessToken', accessToken);
-          form.reset();
-          document.getElementById('shop-login-form').elements.shopId.value = shopId;
-          document.getElementById('shop-setup-form').elements.shopId.value = shopId;
-          authPanel.hidden = true;
-          dashboard.hidden = false;
-          document.getElementById('shop-signout').hidden = false;
-          await loadDashboard();
-        } catch (error) {
-          setStatus(authFeedback, error.message || 'Could not authenticate shop.', 'error');
-        } finally {
-          button.disabled = false;
+      for (const job of jobs) {
+        const row = document.createElement('tr');
+        const values = [
+          job.documentName || job.fileName || 'Print job',
+          job.createdAt ? new Date(job.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—',
+          String(job.pageCount ?? '—'),
+          job.totalAmount === undefined ? '—' : money.format(job.totalAmount),
+        ];
+        for (const value of values) {
+          const cell = document.createElement('td');
+          cell.textContent = value;
+          row.append(cell);
         }
+        const statusCell = document.createElement('td');
+        const status = document.createElement('span');
+        status.className = 'status';
+        const normalizedStatus = String(job.status || 'READY_TO_PRINT').toUpperCase();
+        status.classList.add(normalizedStatus === 'PRINTED' ? 'status-printed' : normalizedStatus === 'PRINT_FAILED' ? 'status-failed' : 'status-ready');
+        status.textContent = normalizedStatus.replaceAll('_', ' ');
+        statusCell.append(status);
+        if (normalizedStatus === 'AWAITING_PAYMENT') {
+          const confirmButton = document.createElement('button');
+          confirmButton.className = 'payment-button';
+          confirmButton.type = 'button';
+          confirmButton.textContent = 'Confirm payment';
+          confirmButton.addEventListener('click', async () => {
+            const paymentReference = window.prompt('Verify the UPI payment in your account, then enter its transaction reference:');
+            if (!paymentReference || paymentReference.trim().length < 4) return;
+            confirmButton.disabled = true;
+            try {
+              await apiRequest(`/api/shops/${encodeURIComponent(shopId)}/print-jobs/${encodeURIComponent(job.id)}/payment-confirmation`, {
+                method: 'POST',
+                body: JSON.stringify({ paymentReference: paymentReference.trim() }),
+              });
+              await loadDashboard();
+            } catch (error) {
+              setStatus(pageStatus, error.message || 'Could not confirm payment.', 'error');
+            } finally {
+              confirmButton.disabled = false;
+            }
+          });
+          statusCell.append(confirmButton);
+        }
+        row.append(statusCell);
+        historyBody.append(row);
+      }
+    }
+
+    async function loadAgentTokens() {
+      const data = await apiRequest(`/api/shops/${encodeURIComponent(shopId)}/agent-tokens`);
+      agentTokenList.replaceChildren();
+      if (!data.tokens.length) {
+        const empty = document.createElement('p');
+        empty.className = 'feedback';
+        empty.textContent = 'No active print-agent tokens.';
+        agentTokenList.append(empty);
+        return;
+      }
+      for (const token of data.tokens) {
+        const row = document.createElement('div');
+        row.className = 'agent-token-row';
+        const details = document.createElement('div');
+        details.className = 'agent-token-details';
+        const label = document.createElement('div');
+        label.className = 'agent-token-label';
+        label.textContent = token.label;
+        const meta = document.createElement('div');
+        meta.className = 'agent-token-meta';
+        meta.textContent = `Expires ${new Date(token.expires_at).toLocaleDateString()}${token.last_used_at ? ` · Last used ${new Date(token.last_used_at).toLocaleString()}` : ''}`;
+        details.append(label, meta);
+        const revoke = document.createElement('button');
+        revoke.className = 'quiet-button';
+        revoke.type = 'button';
+        revoke.textContent = 'Revoke';
+        revoke.addEventListener('click', async () => {
+          revoke.disabled = true;
+          try {
+            await apiRequest(`/api/shops/${encodeURIComponent(shopId)}/agent-tokens/${encodeURIComponent(token.id)}`, { method: 'DELETE' });
+            await loadAgentTokens();
+            setStatus(agentTokenFeedback, 'Agent token revoked.', 'success');
+          } catch (error) {
+            setStatus(agentTokenFeedback, error.message || 'Could not revoke token.', 'error');
+            revoke.disabled = false;
+          }
+        });
+        row.append(details, revoke);
+        agentTokenList.append(row);
+      }
+    }
+
+    async function loadDashboard() {
+      if (!shopId || !accessToken) {
+        document.querySelectorAll('#rates-form input, #rates-form button').forEach((control) => {
+          control.disabled = true;
+        });
+        setStatus(pageStatus, 'Sign in through the shop app to view this dashboard.', 'error');
+        historyBody.replaceChildren();
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.className = 'empty-cell';
+        cell.colSpan = 5;
+        cell.textContent = 'Sign in to load print history.';
+        row.append(cell);
+        historyBody.append(row);
+        return;
       }
 
-      async function apiRequest(path, options = {}) {
-        const response = await fetch(`${apiBase}${path}`, {
-          ...options,
-          headers: {
-            ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-            Authorization: `Bearer ${accessToken}`,
-            ...options.headers,
-          },
+      if (!dateInput.value) {
+        setStatus(pageStatus, 'Choose a valid activity date.', 'error');
+        return;
+      }
+
+      setStatus(pageStatus, 'Refreshing shop activity…');
+      const { from, to } = rangeForDate(dateInput.value);
+      const query = new URLSearchParams({ from, to });
+      try {
+        const data = await apiRequest(`/api/shops/${encodeURIComponent(shopId)}/dashboard?${query}`);
+        document.getElementById('shop-label').textContent = `Shop ${shopId}`;
+        const shopSettings = data.shopSettings || { rates: data.rates, upiId: '' };
+        document.getElementById('bw-rate').value = shopSettings.rates.blackAndWhitePerPage;
+        document.getElementById('color-rate').value = shopSettings.rates.colorPerPage;
+        document.getElementById('upi-id').value = shopSettings.upiId || '';
+        document.getElementById('print-count').textContent = Number(data.dailySummary.totalPrints || 0).toLocaleString('en-IN');
+        document.getElementById('print-revenue').textContent = money.format(Number(data.dailySummary.revenue || 0));
+        renderHistory(data.recentJobs || []);
+        await loadAgentTokens();
+        setStatus(pageStatus, 'Updated just now.');
+      } catch (error) {
+        if (error.code === 'SUBSCRIPTION_EXPIRED') {
+          document.getElementById('subscription-lock').hidden = false;
+          document.querySelector('main').hidden = true;
+        }
+        setStatus(pageStatus, error.message || 'Could not load shop data.', 'error');
+        historyBody.replaceChildren();
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.className = 'empty-cell';
+        cell.colSpan = 5;
+        cell.textContent = error.message || 'Could not load print history.';
+        row.append(cell);
+        historyBody.append(row);
+      }
+    }
+
+    document.getElementById('rates-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = document.getElementById('save-rates');
+      button.disabled = true;
+      setStatus(rateFeedback, 'Saving…');
+      try {
+        await apiRequest(`/api/shops/${encodeURIComponent(shopId)}/settings`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            rates: {
+              blackAndWhitePerPage: Number(document.getElementById('bw-rate').value),
+              colorPerPage: Number(document.getElementById('color-rate').value),
+            },
+            upiId: document.getElementById('upi-id').value.trim(),
+          }),
+        });
+        setStatus(rateFeedback, 'Shop settings saved.', 'success');
+      } catch (error) {
+        setStatus(rateFeedback, error.message || 'Could not save rates.', 'error');
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    document.getElementById('agent-token-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = document.getElementById('create-agent-token');
+      button.disabled = true;
+      setStatus(agentTokenFeedback, 'Creating token…');
+      try {
+        const result = await apiRequest(`/api/shops/${encodeURIComponent(shopId)}/agent-tokens`, {
+          method: 'POST',
+          body: JSON.stringify({ label: document.getElementById('agent-token-label').value.trim() }),
+        });
+        document.getElementById('agent-token-value').textContent = result.token.secret;
+        document.getElementById('agent-token-secret').hidden = false;
+        event.currentTarget.reset();
+        await loadAgentTokens();
+        setStatus(agentTokenFeedback, 'Copy this token now. It will not be shown again.', 'success');
+      } catch (error) {
+        setStatus(agentTokenFeedback, error.message || 'Could not create token.', 'error');
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    document.getElementById('copy-agent-token').addEventListener('click', async () => {
+      await navigator.clipboard.writeText(document.getElementById('agent-token-value').textContent);
+      setStatus(agentTokenFeedback, 'Agent token copied.', 'success');
+    });
+
+    async function submitShopAuth(path, form) {
+      const button = form.querySelector('button[type="submit"]');
+      button.disabled = true;
+      setStatus(loginFeedback, path === '/setup' ? 'Activating account…' : 'Signing in…');
+      try {
+        const response = await fetch(`${apiBase}/api/shop-auth${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(Object.fromEntries(new FormData(form))),
         });
         const body = await response.json().catch(() => ({}));
         if (!response.ok) {
-          if (response.status === 401) {
-            clearShopSession();
-            showShopAuth('Your shop session expired. Sign in again.', 'error');
-          }
           const messages = {
-            SUBSCRIPTION_EXPIRED: 'This shop subscription has expired.',
-            SHOP_SCOPE_FORBIDDEN: 'Your account cannot access this shop.',
-            SHOP_NOT_FOUND: 'Shop was not found.',
+            INVALID_SHOP_CREDENTIALS: 'Shop ID, email, or password is incorrect.',
+            INVALID_SHOP_SETUP: 'Setup code is invalid or expired. Ask your administrator for a new code.',
+            SHOP_LOGIN_RATE_LIMITED: 'Too many attempts. Wait 15 minutes and try again.',
           };
-          const error = new Error(messages[body.error] || body.message || `Request failed (${response.status})`);
-          error.code = body.error;
-          throw error;
+          throw new Error(messages[body.error] || body.error || `Request failed (${response.status})`);
         }
-        return body;
+        shopId = body.shopId;
+        accessToken = body.accessToken;
+        sessionStorage.setItem('printWallahShopId', shopId);
+        sessionStorage.setItem('printWallahAccessToken', accessToken);
+        form.reset();
+        document.querySelector('#shop-login-form [name="shopId"]').value = shopId;
+        document.querySelector('#shop-setup-form [name="shopId"]').value = shopId;
+        loginPanel.hidden = true;
+        shopMain.hidden = false;
+        document.getElementById('sign-out-button').hidden = false;
+        await loadDashboard();
+      } catch (error) {
+        setStatus(loginFeedback, error.message || 'Could not authenticate shop.', 'error');
+      } finally {
+        button.disabled = false;
       }
+    }
 
-      function renderHistory(jobs) {
-        historyBody.replaceChildren();
-        if (!jobs.length) {
-          const row = document.createElement('tr');
-          const cell = document.createElement('td');
-          cell.className = 'empty-cell';
-          cell.colSpan = 5;
-          cell.textContent = 'No print jobs for this date.';
-          row.append(cell);
-          historyBody.append(row);
-          return;
-        }
+    document.getElementById('shop-login-tab').addEventListener('click', () => setAuthMode('login'));
+    document.getElementById('shop-setup-tab').addEventListener('click', () => setAuthMode('setup'));
+    document.getElementById('shop-login-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      submitShopAuth('/login', event.currentTarget);
+    });
+    document.getElementById('shop-setup-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      submitShopAuth('/setup', event.currentTarget);
+    });
 
-        for (const job of jobs) {
-          const row = document.createElement('tr');
-          const values = [
-            job.documentName || job.fileName || 'Print job',
-            job.createdAt ? new Date(job.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—',
-            String(job.pageCount ?? '—'),
-            job.totalAmount === undefined ? '—' : money.format(job.totalAmount),
-          ];
-          for (const value of values) {
-            const cell = document.createElement('td');
-            cell.textContent = value;
-            row.append(cell);
-          }
-          const statusCell = document.createElement('td');
-          const status = document.createElement('span');
-          status.className = 'status';
-          const normalizedStatus = String(job.status || 'READY_TO_PRINT').toUpperCase();
-          status.classList.add(normalizedStatus === 'PRINTED' ? 'status-printed' : normalizedStatus === 'PRINT_FAILED' ? 'status-failed' : 'status-ready');
-          status.textContent = normalizedStatus.replaceAll('_', ' ');
-          statusCell.append(status);
-          row.append(statusCell);
-          historyBody.append(row);
-        }
-      }
+    document.getElementById('sign-out-button').addEventListener('click', () => {
+      sessionStorage.removeItem('printWallahShopId');
+      showLogin();
+    });
 
-      async function loadDashboard() {
-        if (!shopId || !accessToken) {
-          showShopAuth();
-          return;
-        }
-        authPanel.hidden = true;
-        dashboard.hidden = false;
-        document.getElementById('shop-signout').hidden = false;
-
-        if (!dateInput.value) {
-          setStatus(pageStatus, 'Choose a valid activity date.', 'error');
-          return;
-        }
-
-        setStatus(pageStatus, 'Refreshing shop activity…');
-        const { from, to } = rangeForDate(dateInput.value);
-        const query = new URLSearchParams({ from, to });
-        try {
-          const data = await apiRequest(`/api/shops/${encodeURIComponent(shopId)}/dashboard?${query}`);
-          document.getElementById('shop-label').textContent = `Shop ${shopId}`;
-          const shopSettings = data.shopSettings || { rates: data.rates, upiId: '' };
-          document.getElementById('bw-rate').value = shopSettings.rates.blackAndWhitePerPage;
-          document.getElementById('color-rate').value = shopSettings.rates.colorPerPage;
-          document.getElementById('upi-id').value = shopSettings.upiId || '';
-          document.getElementById('print-count').textContent = Number(data.dailySummary.totalPrints || 0).toLocaleString('en-IN');
-          document.getElementById('print-revenue').textContent = money.format(Number(data.dailySummary.revenue || 0));
-          renderHistory(data.recentJobs || []);
-          setStatus(pageStatus, 'Updated just now.');
-        } catch (error) {
-          if (error.code === 'SUBSCRIPTION_EXPIRED') {
-            document.getElementById('subscription-lock').hidden = false;
-            document.querySelector('main').hidden = true;
-          }
-          setStatus(pageStatus, error.message || 'Could not load shop data.', 'error');
-          historyBody.replaceChildren();
-          const row = document.createElement('tr');
-          const cell = document.createElement('td');
-          cell.className = 'empty-cell';
-          cell.colSpan = 5;
-          cell.textContent = error.message || 'Could not load print history.';
-          row.append(cell);
-          historyBody.append(row);
-        }
-      }
-
-      document.getElementById('rates-form').addEventListener('submit', async (event) => {
-        event.preventDefault();
-        const button = document.getElementById('save-rates');
-        button.disabled = true;
-        setStatus(rateFeedback, 'Saving…');
-        try {
-          await apiRequest(`/api/shops/${encodeURIComponent(shopId)}/settings`, {
-            method: 'PUT',
-            body: JSON.stringify({
-              rates: {
-                blackAndWhitePerPage: Number(document.getElementById('bw-rate').value),
-                colorPerPage: Number(document.getElementById('color-rate').value),
-              },
-              upiId: document.getElementById('upi-id').value.trim(),
-            }),
-          });
-          setStatus(rateFeedback, 'Shop settings saved.', 'success');
-        } catch (error) {
-          setStatus(rateFeedback, error.message || 'Could not save rates.', 'error');
-        } finally {
-          button.disabled = false;
-        }
-      });
-
-      const shopQueryId = new URLSearchParams(window.location.search).get('shopId') || '';
-      document.querySelectorAll('#shop-login-form [name="shopId"], #shop-setup-form [name="shopId"]').forEach((input) => {
-        input.value = shopId || shopQueryId;
-      });
-      document.getElementById('shop-login-tab').addEventListener('click', () => setAuthMode('login'));
-      document.getElementById('shop-setup-tab').addEventListener('click', () => setAuthMode('setup'));
-      document.getElementById('shop-login-form').addEventListener('submit', (event) => {
-        event.preventDefault();
-        submitShopAuth('/login', event.currentTarget);
-      });
-      document.getElementById('shop-setup-form').addEventListener('submit', (event) => {
-        event.preventDefault();
-        submitShopAuth('/setup', event.currentTarget);
-      });
-      document.getElementById('shop-signout').addEventListener('click', () => {
-        clearShopSession();
-        setAuthMode('login');
-        showShopAuth('You have signed out.');
-      });
-      dateInput.value = localDateString(new Date());
-      dateInput.addEventListener('change', loadDashboard);
-      if (!shopId || !accessToken) setAuthMode('login');
+    dateInput.value = localDateString(new Date());
+    const shopQueryId = new URLSearchParams(window.location.search).get('shopId') || '';
+    document.querySelectorAll('#shop-login-form [name="shopId"], #shop-setup-form [name="shopId"]').forEach((input) => {
+      input.value = shopId || shopQueryId;
+    });
+    dateInput.addEventListener('change', loadDashboard);
+    if (shopId && accessToken) {
+      shopMain.hidden = false;
+      document.getElementById('sign-out-button').hidden = false;
       loadDashboard();
-    </script>
-  </body>
+    } else {
+      showLogin();
+    }
+  </script>
+</body>
+
 </html>

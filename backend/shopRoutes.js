@@ -1,6 +1,8 @@
+const crypto = require('node:crypto');
+const path = require('node:path');
 const express = require('express');
 
-const PRINT_STATUSES = new Set(['READY_TO_PRINT', 'PRINTED', 'PRINT_FAILED']);
+const PRINT_STATUSES = new Set(['AWAITING_PAYMENT', 'PAYMENT_EXPIRED', 'READY_TO_PRINT', 'PRINTED', 'PRINT_FAILED']);
 const RESULT_STATUSES = new Set(['PRINTED', 'PRINT_FAILED']);
 const MAX_HISTORY_RANGE_MS = 31 * 24 * 60 * 60 * 1000;
 
@@ -64,6 +66,8 @@ function createShopRouter({
   printJobRepository,
   authenticateShop,
   requireActiveSubscription,
+  agentTokenRepository,
+  customerUploadDirectory = path.join(__dirname, 'uploads', 'customer'),
   getAuthenticatedShopId = (request) => request.auth?.shopId,
 }) {
   if (
@@ -85,7 +89,13 @@ function createShopRouter({
   });
 
   router.get('/:shopId/dashboard', async (request, response, next) => {
+    if (request.auth?.role !== 'SHOP_ADMIN') {
+      return response.status(403).json({ error: 'SHOP_ADMIN_REQUIRED' });
+    }
     const dateRange = parseDateRange(request.query);
+    if (request.auth?.role !== 'SHOP_ADMIN') {
+      return response.status(403).json({ error: 'SHOP_ADMIN_REQUIRED' });
+    }
     if (!dateRange) {
       return response.status(400).json({ error: 'INVALID_DATE_RANGE' });
     }
@@ -109,6 +119,9 @@ function createShopRouter({
   });
 
   router.put('/:shopId/rates', async (request, response, next) => {
+    if (request.auth?.role !== 'SHOP_ADMIN') {
+      return response.status(403).json({ error: 'SHOP_ADMIN_REQUIRED' });
+    }
     const rates = request.body;
     if (
       !rates ||
@@ -133,6 +146,9 @@ function createShopRouter({
   });
 
   router.put('/:shopId/settings', async (request, response, next) => {
+    if (request.auth?.role !== 'SHOP_ADMIN') {
+      return response.status(403).json({ error: 'SHOP_ADMIN_REQUIRED' });
+    }
     const { rates, upiId } = request.body || {};
     if (
       !shopRepository.updateShopSettings ||
@@ -146,9 +162,7 @@ function createShopRouter({
 
     try {
       const settings = await shopRepository.updateShopSettings(request.params.shopId, { rates, upiId });
-      if (!settings) {
-        return response.status(404).json({ error: 'SHOP_NOT_FOUND' });
-      }
+      if (!settings) return response.status(404).json({ error: 'SHOP_NOT_FOUND' });
       return response.json({ settings });
     } catch (error) {
       return next(error);
@@ -167,6 +181,12 @@ function createShopRouter({
     ) {
       return response.status(400).json({ error: 'INVALID_JOB_QUERY' });
     }
+    if (request.auth?.role === 'PRINT_AGENT' && status !== 'READY_TO_PRINT') {
+      return response.status(403).json({ error: 'PRINT_AGENT_READY_JOBS_ONLY' });
+    }
+    if (request.auth?.role === 'PRINT_AGENT' && status !== 'READY_TO_PRINT') {
+      return response.status(403).json({ error: 'PRINT_AGENT_READY_JOBS_ONLY' });
+    }
 
     try {
       const result = await printJobRepository.listForShop(request.params.shopId, {
@@ -180,7 +200,108 @@ function createShopRouter({
     }
   });
 
+  router.get('/:shopId/agent-tokens', async (request, response, next) => {
+    if (request.auth?.role !== 'SHOP_ADMIN') {
+      return response.status(403).json({ error: 'SHOP_ADMIN_REQUIRED' });
+    }
+    if (!agentTokenRepository) return response.status(503).json({ error: 'AGENT_TOKENS_UNAVAILABLE' });
+    try {
+      const tokens = await agentTokenRepository.listForShop(request.params.shopId);
+      return response.json({ tokens });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.post('/:shopId/agent-tokens', async (request, response, next) => {
+    if (request.auth?.role !== 'SHOP_ADMIN') {
+      return response.status(403).json({ error: 'SHOP_ADMIN_REQUIRED' });
+    }
+    if (!agentTokenRepository) return response.status(503).json({ error: 'AGENT_TOKENS_UNAVAILABLE' });
+    const label = typeof request.body?.label === 'string' ? request.body.label.trim() : '';
+    if (label.length < 2 || label.length > 80) {
+      return response.status(400).json({ error: 'INVALID_AGENT_TOKEN_LABEL' });
+    }
+    try {
+      const rawToken = `pwa_${crypto.randomBytes(32).toString('base64url')}`;
+      const createdAt = new Date();
+      const expiresAt = new Date(createdAt.getTime() + 365 * 24 * 60 * 60 * 1000);
+      const token = await agentTokenRepository.create({
+        id: crypto.randomUUID(),
+        shopId: request.params.shopId,
+        label,
+        tokenHash: crypto.createHash('sha256').update(rawToken).digest('hex'),
+        createdAt,
+        expiresAt,
+      });
+      return response.status(201).json({ token: { ...token, secret: rawToken } });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.delete('/:shopId/agent-tokens/:tokenId', async (request, response, next) => {
+    if (request.auth?.role !== 'SHOP_ADMIN') {
+      return response.status(403).json({ error: 'SHOP_ADMIN_REQUIRED' });
+    }
+    if (!agentTokenRepository) return response.status(503).json({ error: 'AGENT_TOKENS_UNAVAILABLE' });
+    try {
+      const revoked = await agentTokenRepository.revoke(request.params.shopId, request.params.tokenId);
+      if (!revoked) return response.status(404).json({ error: 'AGENT_TOKEN_NOT_FOUND' });
+      return response.status(204).end();
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.post('/:shopId/print-jobs/:jobId/payment-confirmation', async (request, response, next) => {
+    if (request.auth?.role !== 'SHOP_ADMIN') {
+      return response.status(403).json({ error: 'SHOP_ADMIN_REQUIRED' });
+    }
+    const paymentReference = typeof request.body?.paymentReference === 'string'
+      ? request.body.paymentReference.trim()
+      : '';
+    if (paymentReference.length < 4 || paymentReference.length > 120) {
+      return response.status(400).json({ error: 'INVALID_PAYMENT_REFERENCE' });
+    }
+
+    try {
+      const result = await printJobRepository.confirmCustomerPayment(
+        request.params.shopId,
+        request.params.jobId,
+        paymentReference,
+      );
+      if (!result) return response.status(404).json({ error: 'PRINT_JOB_NOT_FOUND' });
+      if (!result.confirmed) return response.status(409).json({ error: 'PAYMENT_CONFIRMATION_CONFLICT' });
+      return response.json({ job: result.job });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.get('/:shopId/print-jobs/:jobId/file', async (request, response, next) => {
+    if (request.auth?.role !== 'PRINT_AGENT') {
+      return response.status(403).json({ error: 'PRINT_AGENT_REQUIRED' });
+    }
+    try {
+      const file = await printJobRepository.getFileForAgent(request.params.shopId, request.params.jobId);
+      if (!file || typeof file.storage_key !== 'string' || path.basename(file.storage_key) !== file.storage_key) {
+        return response.status(404).json({ error: 'PRINT_FILE_NOT_FOUND' });
+      }
+      return response.download(file.storage_key, file.file_name || file.storage_key, {
+        root: customerUploadDirectory,
+      }, (error) => {
+        if (error && !response.headersSent) next(error);
+      });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
   router.post('/:shopId/print-jobs/:jobId/status', async (request, response, next) => {
+    if (request.auth?.role !== 'PRINT_AGENT') {
+      return response.status(403).json({ error: 'PRINT_AGENT_REQUIRED' });
+    }
     const { status, error } = request.body || {};
     if (
       !RESULT_STATUSES.has(status) ||

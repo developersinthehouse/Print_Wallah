@@ -8,6 +8,7 @@ const JWT_SECRET = 'print-wallah-super-admin-test-secret-with-32-bytes';
 const FIXED_NOW = new Date('2026-09-28T00:00:00.000Z');
 const shops = new Map();
 const auditEntries = [];
+let createdShopAdmin;
 let server;
 let baseUrl;
 
@@ -47,9 +48,10 @@ before(async () => {
   };
   const printJobRepository = { getPlatformVolume: async () => 24500 };
   const adminRepository = {
-    createShopWithAudit: async ({ shop, audit }) => {
+    createShopWithAudit: async ({ shop, shopAdmin, audit }) => {
       if (shops.has(shop.id)) return null;
       shops.set(shop.id, shop);
+      createdShopAdmin = shopAdmin;
       auditEntries.push(audit);
       return shop;
     },
@@ -122,9 +124,12 @@ test('onboarding creates an active shop with a unique ID and QR code', async () 
   assert.equal(body.shop.subscription_status, 'ACTIVE');
   assert.equal(body.shop.subscription_expiry_date, '2026-10-28T00:00:00.000Z');
   assert.match(body.qrCodeDataUrl, /^data:image\/png;base64,/);
+  assert.equal(new URL(body.onboardingUrl).searchParams.get('shopId'), body.shop.id);
   assert.match(body.shopAdminSetupToken, /^[A-Za-z0-9_-]{43}$/);
   assert.equal(new Date(body.shopAdminSetupExpiresAt).toISOString(), '2026-10-05T00:00:00.000Z');
-  assert.equal(new URL(body.onboardingUrl).searchParams.get('shopId'), body.shop.id);
+  assert.match(createdShopAdmin.setupTokenHash, /^[0-9a-f]{64}$/);
+  assert.notEqual(createdShopAdmin.setupTokenHash, body.shopAdminSetupToken);
+  assert.equal(body.shop.upiVpa, '');
   assert.equal(auditEntries.at(-1).action, 'SHOP_ONBOARDED');
 });
 

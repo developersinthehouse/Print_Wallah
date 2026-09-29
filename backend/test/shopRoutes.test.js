@@ -4,9 +4,9 @@ const express = require('express');
 const { createShopRouter } = require('../shopRoutes');
 
 const storedRates = { blackAndWhitePerPage: 2, colorPerPage: 8 };
-let storedUpiId = '';
+const storedSettings = { rates: storedRates, upiId: 'shop@upi' };
 let lastUpdatedRates;
-let lastShopSettings;
+let lastUpdatedSettings;
 let lastJobResult;
 let server;
 let baseUrl;
@@ -15,19 +15,16 @@ before(async () => {
   const app = express();
   const shopRepository = {
     getRates: async (shopId) => (shopId === 'shop-1' ? storedRates : null),
-    getShopSettings: async (shopId) => (shopId === 'shop-1'
-      ? { rates: storedRates, upiId: storedUpiId }
-      : null),
+    getShopSettings: async (shopId) => (shopId === 'shop-1' ? storedSettings : null),
+    updateShopSettings: async (shopId, settings) => {
+      if (shopId !== 'shop-1') return null;
+      lastUpdatedSettings = settings;
+      return settings;
+    },
     updateRates: async (shopId, rates) => {
       if (shopId !== 'shop-1') return null;
       lastUpdatedRates = rates;
       return rates;
-    },
-    updateShopSettings: async (shopId, settings) => {
-      if (shopId !== 'shop-1') return null;
-      lastShopSettings = settings;
-      storedUpiId = settings.upiId;
-      return { ...settings };
     },
   };
   const printJobRepository = {
@@ -40,7 +37,10 @@ before(async () => {
     },
   };
   const authenticateShop = (request, response, next) => {
-    request.auth = { shopId: request.get('x-test-shop-id') };
+    request.auth = {
+      shopId: request.get('x-test-shop-id'),
+      role: request.get('x-test-role') || 'SHOP_ADMIN',
+    };
     next();
   };
   const requireActiveSubscription = (request, response, next) => {
@@ -79,7 +79,7 @@ test('dashboard returns shop rates, date summary, and recent jobs', async () => 
 
   assert.equal(response.status, 200);
   assert.deepEqual(body.rates, storedRates);
-  assert.deepEqual(body.shopSettings, { rates: storedRates, upiId: '' });
+  assert.deepEqual(body.shopSettings, storedSettings);
   assert.deepEqual(body.dailySummary, { totalPrints: 12, revenue: 96 });
   assert.equal(body.recentJobs[0].id, 'job-1');
 });
@@ -124,45 +124,47 @@ test('rate updates reject negative or malformed prices', async () => {
   assert.deepEqual(await response.json(), { error: 'INVALID_RATES' });
 });
 
+test('shop admins can update rates and the customer UPI ID together', async () => {
+  const settings = {
+    rates: { blackAndWhitePerPage: 2.5, colorPerPage: 9 },
+    upiId: 'central.prints@bank',
+  };
+  const response = await fetch(`${baseUrl}/api/shops/shop-1/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json', 'x-test-shop-id': 'shop-1' },
+    body: JSON.stringify(settings),
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(lastUpdatedSettings, settings);
+  assert.deepEqual((await response.json()).settings, settings);
+});
+
+test('shop settings reject invalid UPI IDs and print agents', async () => {
+  const invalidSettings = await fetch(`${baseUrl}/api/shops/shop-1/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json', 'x-test-shop-id': 'shop-1' },
+    body: JSON.stringify({ rates: storedRates, upiId: 'not-a-vpa' }),
+  });
+  const agentSettings = await fetch(`${baseUrl}/api/shops/shop-1/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json', 'x-test-shop-id': 'shop-1', 'x-test-role': 'PRINT_AGENT' },
+    body: JSON.stringify({ rates: storedRates, upiId: 'agent@upi' }),
+  });
+
+  assert.equal(invalidSettings.status, 400);
+  assert.deepEqual(await invalidSettings.json(), { error: 'INVALID_SHOP_SETTINGS' });
+  assert.equal(agentSettings.status, 403);
+  assert.deepEqual(await agentSettings.json(), { error: 'SHOP_ADMIN_REQUIRED' });
+});
+
 test('print agent can report a result through the shop-scoped endpoint', async () => {
   const response = await fetch(`${baseUrl}/api/shops/shop-1/print-jobs/job-1/status`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-test-shop-id': 'shop-1' },
+    headers: { 'content-type': 'application/json', 'x-test-shop-id': 'shop-1', 'x-test-role': 'PRINT_AGENT' },
     body: JSON.stringify({ status: 'PRINT_FAILED', error: 'Printer unavailable' }),
   });
 
   assert.equal(response.status, 200);
   assert.deepEqual(lastJobResult, { status: 'PRINT_FAILED', error: 'Printer unavailable' });
-});
-
-test('shop settings save rates and a valid UPI ID together', async () => {
-  const response = await fetch(`${baseUrl}/api/shops/shop-1/settings`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json', 'x-test-shop-id': 'shop-1' },
-    body: JSON.stringify({
-      rates: { blackAndWhitePerPage: 2.5, colorPerPage: 9 },
-      upiId: 'centralprints@oksbi',
-    }),
-  });
-
-  assert.equal(response.status, 200);
-  assert.equal(lastShopSettings.upiId, 'centralprints@oksbi');
-  assert.deepEqual((await response.json()).settings.rates, {
-    blackAndWhitePerPage: 2.5,
-    colorPerPage: 9,
-  });
-});
-
-test('shop settings reject malformed UPI IDs', async () => {
-  const response = await fetch(`${baseUrl}/api/shops/shop-1/settings`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json', 'x-test-shop-id': 'shop-1' },
-    body: JSON.stringify({
-      rates: { blackAndWhitePerPage: 2, colorPerPage: 8 },
-      upiId: 'not-a-upi-id',
-    }),
-  });
-
-  assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), { error: 'INVALID_SHOP_SETTINGS' });
 });

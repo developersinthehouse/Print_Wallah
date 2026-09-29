@@ -4,7 +4,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 import requests
 
@@ -77,15 +77,29 @@ class PrintAgent:
 
     def download_job_file(self, job):
         file_url = job.get("fileUrl")
-        if not isinstance(file_url, str) or urlparse(file_url).scheme not in ("http", "https"):
+        if not isinstance(file_url, str) or not file_url:
+            raise ValueError("Job is missing a valid HTTP(S) fileUrl")
+        resolved_url = urljoin(f"{self.api_base_url.rstrip('/')}/", file_url)
+        parsed_url = urlparse(resolved_url)
+        base_url = urlparse(self.api_base_url)
+        if parsed_url.scheme not in ("http", "https") or not parsed_url.netloc:
             raise ValueError("Job is missing a valid HTTP(S) fileUrl")
 
         job_id = str(job["id"])
         safe_job_id = re.sub(r"[^A-Za-z0-9_-]", "_", job_id)
-        suffix = Path(urlparse(file_url).path).suffix[:16]
+        file_name = job.get("fileName")
+        suffix = Path(file_name).suffix[:16] if isinstance(file_name, str) else ""
+        if not suffix:
+            suffix = Path(parsed_url.path).suffix[:16]
         file_path = self.spool_directory / f"job_{safe_job_id}{suffix}"
 
-        response = self.session.get(file_url, stream=True, timeout=REQUEST_TIMEOUT_SECONDS)
+        headers = self.headers if parsed_url.netloc == base_url.netloc else None
+        response = self.session.get(
+            resolved_url,
+            stream=True,
+            headers=headers,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
         response.raise_for_status()
         with file_path.open("wb") as output_file:
             for chunk in response.iter_content(chunk_size=64 * 1024):
@@ -125,7 +139,11 @@ class PrintAgent:
 
         try:
             file_path = self.download_job_file(job)
-            self.send_to_printer(file_path)
+            copies = job.get("copies", 1)
+            if isinstance(copies, bool) or not isinstance(copies, int) or not 1 <= copies <= 100:
+                raise ValueError("Job has an invalid copy count")
+            for _ in range(copies):
+                self.send_to_printer(file_path)
             result_status = "PRINTED"
             result_error = None
             logging.info("Job %s sent to the default Windows printer", job_id)

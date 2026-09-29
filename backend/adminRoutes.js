@@ -148,12 +148,17 @@ function createSuperAdminRouter({
     const shopName = typeof body.shopName === 'string' ? body.shopName.trim() : '';
     const ownerName = typeof body.ownerName === 'string' ? body.ownerName.trim() : '';
     const ownerEmail = typeof body.ownerEmail === 'string' ? body.ownerEmail.trim().toLowerCase() : '';
+    const upiVpa = typeof body.upiVpa === 'string' ? body.upiVpa.trim() : '';
     const planId = body.planId;
 
     if (
       shopName.length < 2 || shopName.length > 120 ||
       ownerName.length < 2 || ownerName.length > 120 ||
       ownerEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail) ||
+      (body.upiVpa !== undefined && (
+        typeof body.upiVpa !== 'string' ||
+        (upiVpa !== '' && !/^[A-Za-z0-9._-]{2,256}@[A-Za-z0-9.-]{2,64}$/.test(upiVpa))
+      )) ||
       typeof planId !== 'string' || !Object.hasOwn(planDurationsDays, planId) ||
       !validateRates(body.rates)
     ) {
@@ -179,6 +184,7 @@ function createSuperAdminRouter({
         shopName,
         ownerName,
         ownerEmail,
+        upiVpa,
         rates: body.rates,
         subscription_status: 'ACTIVE',
         subscription_expiry_date: subscriptionExpiryDate,
@@ -186,8 +192,11 @@ function createSuperAdminRouter({
       };
       const createdShop = await adminRepository.createShopWithAudit({
         shop,
-        shopAdminSetupTokenHash,
-        shopAdminSetupExpiresAt,
+        shopAdmin: {
+          email: ownerEmail,
+          setupTokenHash: shopAdminSetupTokenHash,
+          setupExpiresAt: shopAdminSetupExpiresAt,
+        },
         audit: {
           adminId: request.admin.id,
           action: 'SHOP_ONBOARDED',

@@ -1,16 +1,14 @@
----
-
-### 3. `rules.md` (Coding Standards & Guidelines - Stream 2)
+### 3. `rules.md` (Coding Standards & Guidelines - Stream 1)
 
 ```markdown
-# Coding Standards & Boundaries: Stream 2
-**Focus:** Agent Resilience, Subscription Security, and Admin Access Control
+# Coding Standards & Boundaries: Stream 1
+**Focus:** Customer Upload Safety, Direct UPI Logic, and API Reliability
 
 ## Guidelines & Rules
-1. **Desktop Agent Fault Tolerance:** The Python print agent must implement exponential backoff retry logic. If the shop loses internet connectivity, the agent must catch exceptions gracefully without crashing or freezing the shopkeeper's PC.
-2. **Strict Subscription Middleware Enforcement:** Every authenticated request from a shop dashboard or print agent must pass through the subscription verification middleware. Expired shops must be blocked immediately with a `403 Forbidden - Subscription Expired` response.
-3. **Super Admin Authorization:** Master onboarding and global metrics endpoints must be strictly protected behind cryptographic tokens (JWT) or secure admin session keys.
-4. **Error Handling & Logging:** 
-   - Agent: Log local print failures or missing printers clearly to a local `agent.log` file.
-   - Backend: Return structured JSON error states for expired subscriptions or invalid shop IDs.
-5. **Naming Conventions:** Use `snake_case` for Python scripts, strict `camelCase` for JavaScript functions, and `PascalCase` for database schemas.
+1. **Strict Input Validation:** Validate file extensions on both frontend and backend. Only allow `.pdf`, `.png`, `.jpg`, `.jpeg`. Reject executable or unauthorized files instantly with a `400 Bad Request`.
+2. **Zero Centralized Money Retention:** Never store or route customer payments through developer accounts. All intent strings must dynamically pull the respective shop's registered VPA (`pa`) parameter.
+3. **Data Privacy Compliance:** Customer files must have a short lifespan on disk. Implement auto-deletion routines post-print execution to maintain total user privacy.
+4. **Error Handling & Feedback:**
+   * Frontend: Show clean, responsive loader states during file parsing and payment verification.
+   * Backend: Return standardized JSON responses (`{ success: false, message: '...' }`) for any execution errors.
+5. **Naming Conventions:** Use strict `camelCase` for JavaScript variables and function names, and `kebab-case` for file naming conventions.

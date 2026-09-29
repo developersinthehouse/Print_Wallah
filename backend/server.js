@@ -8,8 +8,9 @@ const { runMigrations } = require('./db/migrate');
 const { createShopAuth } = require('./middleware/shopAuth');
 const { createSubscriptionCheck } = require('./middleware/subCheck');
 const { createPostgresRepositories } = require('./postgresRepositories');
-const { createShopRouter } = require('./shopRoutes');
+const customerRouter = require('./routes/customerRoutes');
 const { createShopSessionRouter } = require('./shopSessionRoutes');
+const { createShopRouter } = require('./shopRoutes');
 const { createSubscriptionRouter } = require('./subscriptionRoutes');
 const { startExpiryMonitor } = require('./subscriptionEngine');
 
@@ -19,6 +20,7 @@ function createApp({ pool, configuration, logger = console }) {
     jwtSecret: configuration.shopJwtSecret,
     issuer: configuration.shopJwtIssuer,
     audience: configuration.shopJwtAudience,
+    agentTokenRepository: repositories.agentTokenRepository,
   });
   const requireActiveSubscription = createSubscriptionCheck({
     shopRepository: repositories.shopRepository,
@@ -31,6 +33,27 @@ function createApp({ pool, configuration, logger = console }) {
 
   const app = express();
   app.disable('x-powered-by');
+  const assetDirectory = path.join(__dirname, '..');
+  app.get('/assets/pw_logo.jpeg', (request, response) => response.sendFile(path.join(assetDirectory, 'pw_logo.jpeg')));
+  app.get('/assets/developers-logo_nobg.webp', (request, response) => response.sendFile(path.join(assetDirectory, 'developers-logo_nobg.webp')));
+  app.locals.createCustomerOrder = (order) => repositories.printJobRepository.createCustomerOrder(order);
+  app.locals.expireCustomerOrders = (now) => repositories.printJobRepository.expireAwaitingPayment(now);
+  app.locals.listActiveCustomerFiles = () => repositories.printJobRepository.listActiveCustomerFiles();
+  app.locals.getShopById = async (shopId) => {
+    const shop = await repositories.shopRepository.findById(shopId);
+    if (!shop) return null;
+    return {
+      id: shop.id,
+      name: shop.shopName,
+      upiVpa: shop.upiVpa,
+      subscription_status: shop.subscription_status,
+      subscription_expiry_date: shop.subscription_expiry_date,
+      rates: {
+        bw: shop.rates.blackAndWhitePerPage,
+        color: shop.rates.colorPerPage,
+      },
+    };
+  };
 
   app.get('/healthz', async (request, response) => {
     try {
@@ -61,6 +84,7 @@ function createApp({ pool, configuration, logger = console }) {
   app.use('/api/shops', createShopRouter({
     shopRepository: repositories.shopRepository,
     printJobRepository: repositories.printJobRepository,
+    agentTokenRepository: repositories.agentTokenRepository,
     authenticateShop,
     requireActiveSubscription,
   }));
@@ -72,13 +96,14 @@ function createApp({ pool, configuration, logger = console }) {
     onboardingBaseUrl: configuration.onboardingBaseUrl,
     planDurationsDays: configuration.planDurationsDays,
   }));
+  app.use('/api/customer', customerRouter);
 
   const viewsDirectory = path.join(__dirname, '..', 'frontend', 'views');
-  const assetDirectory = path.join(__dirname, '..');
-  app.get('/assets/pw_logo.jpeg', (request, response) => response.sendFile(path.join(assetDirectory, 'pw_logo.jpeg')));
-  app.get('/assets/developers-logo_nobg.webp', (request, response) => response.sendFile(path.join(assetDirectory, 'developers-logo_nobg.webp')));
+  const customerPage = path.join(__dirname, '..', 'frontend', 'customer', 'index.html');
+  app.get('/', (request, response) => response.redirect('/start'));
   app.get('/shop-admin', (request, response) => response.sendFile(path.join(viewsDirectory, 'shop-admin.html')));
   app.get('/super-admin', (request, response) => response.sendFile(path.join(viewsDirectory, 'super-admin.html')));
+  app.get(['/start', '/customer', '/shop/:shopId'], (request, response) => response.sendFile(customerPage));
   app.use((request, response) => response.status(404).json({ error: 'NOT_FOUND' }));
   app.use((error, request, response, next) => {
     const statusCode = Number.isInteger(error.status) && error.status >= 400 && error.status < 500
@@ -111,12 +136,18 @@ async function startServer(options = {}) {
       shopRepository: createPostgresRepositories(pool).shopRepository,
       logger: options.logger || console,
     });
+    const printJobRepository = createPostgresRepositories(pool).printJobRepository;
+    const stopCustomerOrderCleanup = customerRouter.startCustomerOrderCleanup({
+      expirePendingOrders: (now) => printJobRepository.expireAwaitingPayment(now),
+      listActiveFiles: () => printJobRepository.listActiveCustomerFiles(),
+    });
 
     let shuttingDown = false;
     const shutdown = async () => {
       if (shuttingDown) return;
       shuttingDown = true;
       stopExpiryMonitor();
+      stopCustomerOrderCleanup();
       await new Promise((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
