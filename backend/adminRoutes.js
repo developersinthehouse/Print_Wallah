@@ -104,6 +104,14 @@ function createSuperAdminRouter({
   const router = express.Router();
   router.use(authenticateSuperAdmin, express.json({ limit: '32kb' }));
 
+  function createShopQr(shopId) {
+    const onboardingUrl = new URL(`/shop/${encodeURIComponent(shopId)}`, new URL(onboardingBaseUrl).origin);
+    return qrCodeGenerator(onboardingUrl.toString()).then((qrCodeDataUrl) => ({
+      onboardingUrl: onboardingUrl.toString(),
+      qrCodeDataUrl,
+    }));
+  }
+
   router.get('/plans', (request, response) => {
     const plans = Object.entries(planDurationsDays).map(([id, durationDays]) => ({ id, durationDays }));
     return response.json({ plans });
@@ -143,6 +151,17 @@ function createSuperAdminRouter({
     }
   });
 
+  router.get('/shops/:shopId/qr', async (request, response, next) => {
+    try {
+      const shop = await shopRepository.findById(request.params.shopId);
+      if (!shop) return response.status(404).json({ error: 'SHOP_NOT_FOUND' });
+      const qr = await createShopQr(shop.id);
+      return response.json({ shopId: shop.id, ...qr });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
   router.post('/shops', async (request, response, next) => {
     const body = request.body || {};
     const shopName = typeof body.shopName === 'string' ? body.shopName.trim() : '';
@@ -171,9 +190,7 @@ function createSuperAdminRouter({
       const shopAdminSetupToken = crypto.randomBytes(32).toString('base64url');
       const shopAdminSetupTokenHash = crypto.createHash('sha256').update(shopAdminSetupToken).digest('hex');
       const shopAdminSetupExpiresAt = new Date(createdAt.getTime() + 7 * 24 * 60 * 60 * 1000);
-      const qrUrl = new URL(onboardingUrl);
-      qrUrl.searchParams.set('shopId', shopId);
-      const qrCodeDataUrl = await qrCodeGenerator(qrUrl.toString());
+      const qr = await createShopQr(shopId);
       const subscriptionExpiryDate = calculateRenewalExpiry(
         null,
         createdAt,
@@ -211,8 +228,7 @@ function createSuperAdminRouter({
       }
       return response.status(201).json({
         shop: createdShop,
-        onboardingUrl: qrUrl.toString(),
-        qrCodeDataUrl,
+        ...qr,
         shopAdminSetupToken,
         shopAdminSetupExpiresAt,
       });

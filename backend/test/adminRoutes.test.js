@@ -124,13 +124,25 @@ test('onboarding creates an active shop with a unique ID and QR code', async () 
   assert.equal(body.shop.subscription_status, 'ACTIVE');
   assert.equal(body.shop.subscription_expiry_date, '2026-10-28T00:00:00.000Z');
   assert.match(body.qrCodeDataUrl, /^data:image\/png;base64,/);
-  assert.equal(new URL(body.onboardingUrl).searchParams.get('shopId'), body.shop.id);
+  assert.equal(new URL(body.onboardingUrl).pathname, `/shop/${body.shop.id}`);
+  assert.equal(new URL(body.onboardingUrl).search, '');
   assert.match(body.shopAdminSetupToken, /^[A-Za-z0-9_-]{43}$/);
   assert.equal(new Date(body.shopAdminSetupExpiresAt).toISOString(), '2026-10-05T00:00:00.000Z');
   assert.match(createdShopAdmin.setupTokenHash, /^[0-9a-f]{64}$/);
   assert.notEqual(createdShopAdmin.setupTokenHash, body.shopAdminSetupToken);
   assert.equal(body.shop.upiVpa, '');
   assert.equal(auditEntries.at(-1).action, 'SHOP_ONBOARDED');
+});
+
+test('super-admin can regenerate a customer QR for an existing shop', async () => {
+  const shopId = [...shops.keys()][0];
+  const response = await adminRequest(`/shops/${encodeURIComponent(shopId)}/qr`);
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.shopId, shopId);
+  assert.equal(new URL(body.onboardingUrl).pathname, `/shop/${shopId}`);
+  assert.match(body.qrCodeDataUrl, /^data:image\/png;base64,/);
 });
 
 test('global metrics return subscription counts and platform volume', async () => {

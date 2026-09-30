@@ -494,6 +494,10 @@
       border-radius: 5px;
     }
 
+    .setup-code[hidden] {
+      display: none;
+    }
+
     .setup-code output {
       overflow-wrap: anywhere;
       font-family: ui-monospace, Consolas, monospace;
@@ -730,7 +734,7 @@
       <img id="qr-image" alt="QR code for the newly created shop">
       <div id="qr-shop-id" class="qr-shop-id"></div>
       <a id="qr-url" class="qr-link"></a>
-      <div class="setup-code">
+      <div class="setup-code" hidden>
         <strong>One-time owner setup code</strong>
         <output id="shop-setup-code"></output>
         <small id="shop-setup-expiry">Share this code securely. It can only be used once.</small>
@@ -794,6 +798,34 @@
       }
     }
 
+    function showShopQr({ shopId, onboardingUrl, qrCodeDataUrl, setupToken, setupExpiresAt }) {
+      document.getElementById('qr-image').src = qrCodeDataUrl;
+      document.getElementById('qr-image').alt = `Customer QR code for shop ${shopId}`;
+      document.getElementById('qr-shop-id').textContent = shopId;
+      const qrUrl = document.getElementById('qr-url');
+      qrUrl.href = onboardingUrl;
+      qrUrl.textContent = onboardingUrl;
+      const setupCode = document.querySelector('.setup-code');
+      setupCode.hidden = !setupToken;
+      if (setupToken) {
+        document.getElementById('shop-setup-code').textContent = setupToken;
+        document.getElementById('shop-setup-expiry').textContent = `Share this code securely. It expires ${new Date(setupExpiresAt).toLocaleString()} and can only be used once.`;
+      }
+      const download = document.getElementById('qr-download');
+      download.href = qrCodeDataUrl;
+      download.download = `print-wallah-${shopId}-qr.png`;
+      qrDialog.showModal();
+    }
+
+    async function showExistingShopQr(shop) {
+      try {
+        const result = await apiRequest(`/shops/${encodeURIComponent(shop.id)}/qr`);
+        showShopQr(result);
+      } catch (error) {
+        setFeedback(feedback, error.message || 'Could not regenerate shop QR.', 'error');
+      }
+    }
+
     function renderShops(shops) {
       shopsBody.replaceChildren();
       if (!shops.length) {
@@ -849,7 +881,13 @@
         lockButton.textContent = 'Lock';
         lockButton.disabled = statusValue === 'LOCKED';
         lockButton.addEventListener('click', () => updateSubscription(shop, 'LOCK'));
-        actions.append(planSelect, extendButton, lockButton);
+        const qrButton = document.createElement('button');
+        qrButton.className = 'quiet-button';
+        qrButton.type = 'button';
+        qrButton.textContent = 'QR';
+        qrButton.setAttribute('aria-label', `Regenerate customer QR for ${shop.shopName}`);
+        qrButton.addEventListener('click', () => showExistingShopQr(shop));
+        actions.append(planSelect, extendButton, lockButton, qrButton);
         actionsCell.append(actions);
         row.append(shopCell, idCell, statusCell, expiryCell, actionsCell);
         shopsBody.append(row);
@@ -995,15 +1033,13 @@
         });
         onboardingDialog.close();
         form.reset();
-        document.getElementById('qr-image').src = result.qrCodeDataUrl;
-        document.getElementById('qr-shop-id').textContent = result.shop.id;
-        document.getElementById('shop-setup-code').textContent = result.shopAdminSetupToken;
-        document.getElementById('shop-setup-expiry').textContent = `Share this code securely. It expires ${new Date(result.shopAdminSetupExpiresAt).toLocaleString()} and can only be used once.`;
-        const qrUrl = document.getElementById('qr-url');
-        qrUrl.href = result.onboardingUrl;
-        qrUrl.textContent = result.onboardingUrl;
-        document.getElementById('qr-download').href = result.qrCodeDataUrl;
-        qrDialog.showModal();
+        showShopQr({
+          shopId: result.shop.id,
+          onboardingUrl: result.onboardingUrl,
+          qrCodeDataUrl: result.qrCodeDataUrl,
+          setupToken: result.shopAdminSetupToken,
+          setupExpiresAt: result.shopAdminSetupExpiresAt,
+        });
         setFeedback(feedback, `${result.shop.shopName} onboarded.`, 'success');
         await Promise.all([loadShops(), refreshMetrics()]);
       } catch (error) {

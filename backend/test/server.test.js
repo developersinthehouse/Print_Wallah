@@ -117,7 +117,8 @@ test('server mounts auth, onboarding, shop operations, renewals, and static admi
   const onboarded = await onboardingResponse.json();
   const shopId = onboarded.shop.id;
   assert.equal(typeof onboarded.shopAdminSetupToken, 'string');
-  assert.equal((await fetch(`${baseUrl}/start?shopId=${shopId}`)).status, 200);
+  assert.equal(new URL(onboarded.onboardingUrl).pathname, `/shop/${shopId}`);
+  assert.equal((await fetch(`${baseUrl}/shop/${shopId}`)).status, 200);
   const homePage = await fetch(baseUrl);
   assert.equal(homePage.status, 200);
   assert.match(await homePage.text(), /QuickPrint \| Print locally/);
