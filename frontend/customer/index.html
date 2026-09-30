@@ -94,6 +94,22 @@
             class="text-xs text-slate-500">Loading shop rates…</span>
         </div>
         <div class="grid grid-cols-2 gap-3">
+          <label class="col-span-2 text-sm font-medium text-slate-700 sm:col-span-1">Print type
+            <select id="printType" name="printType"
+              class="mt-1.5 block h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+              disabled>
+              <option value="document">Document / form</option>
+              <option value="photo">Photo print</option>
+            </select>
+          </label>
+          <label class="col-span-2 text-sm font-medium text-slate-700 sm:col-span-1">Paper finish
+            <select id="paperFinish" name="paperFinish"
+              class="mt-1.5 block h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+              disabled>
+              <option value="plain">Plain paper</option>
+              <option value="glossy">Glossy paper</option>
+            </select>
+          </label>
           <label class="col-span-2 text-sm font-medium text-slate-700 sm:col-span-1">Print style
             <select id="colorMode" name="colorMode"
               class="mt-1.5 block h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-100"
@@ -172,7 +188,7 @@
       const elements = {
         form: document.querySelector('#orderForm'), shopName: document.querySelector('#shopName'), notice: document.querySelector('#notice'),
         file: document.querySelector('#fileInput'), fileLabel: document.querySelector('#fileLabel'), fileError: document.querySelector('#fileError'),
-        colorMode: document.querySelector('#colorMode'), pageCount: document.querySelector('#pageCount'), copies: document.querySelector('#copies'),
+        printType: document.querySelector('#printType'), paperFinish: document.querySelector('#paperFinish'), colorMode: document.querySelector('#colorMode'), pageCount: document.querySelector('#pageCount'), copies: document.querySelector('#copies'),
         rateStatus: document.querySelector('#rateStatus'), calculation: document.querySelector('#calculation'), total: document.querySelector('#total'),
         submit: document.querySelector('#submitButton'), submitLabel: document.querySelector('#submitLabel'), spinner: document.querySelector('#submitSpinner'),
         paymentPanel: document.querySelector('#paymentPanel'), orderSummary: document.querySelector('#orderSummary'), upiLink: document.querySelector('#upiLink'), upiRecipient: document.querySelector('#upiRecipient')
@@ -194,22 +210,30 @@
         if (!shop) return null;
         const pageCount = Number(elements.pageCount.value);
         const copies = Number(elements.copies.value);
-        const rate = Number(shop.rates[elements.colorMode.value]);
+        const printType = elements.printType.value;
+        const billablePages = printType === 'photo' ? 1 : pageCount;
+        const rate = printType === 'photo' ? Number(shop.printOptions.photoPrice) : Number(shop.rates[elements.colorMode.value]);
+        const glossySurcharge = elements.paperFinish.value === 'glossy'
+          ? Number(shop.printOptions.glossySurchargePerPage)
+          : 0;
         if (!Number.isInteger(pageCount) || pageCount < 1 || pageCount > 500 || !Number.isInteger(copies) || copies < 1 || copies > 100 || !Number.isFinite(rate)) return null;
-        return { pageCount, copies, rate, amount: Math.round(pageCount * copies * rate * 100) / 100 };
+        const amount = Math.round((billablePages * (rate + glossySurcharge) * copies) * 100) / 100;
+        return { pageCount, billablePages, copies, rate, glossySurcharge, amount };
       }
 
       function updatePrice() {
         const quote = currentPrice();
         if (!quote) { elements.total.textContent = '₹—'; elements.calculation.textContent = 'Check print settings'; return; }
         elements.total.textContent = `₹${quote.amount.toFixed(2)}`;
-        elements.calculation.textContent = `${quote.pageCount} page${quote.pageCount === 1 ? '' : 's'} × ${quote.copies} cop${quote.copies === 1 ? 'y' : 'ies'} × ₹${quote.rate.toFixed(2)}`;
+        const unitPrice = quote.rate + quote.glossySurcharge;
+        elements.calculation.textContent = `${quote.billablePages} ${elements.printType.value === 'photo' ? 'photo' : 'page'}${quote.billablePages === 1 ? '' : 's'} × ${quote.copies} cop${quote.copies === 1 ? 'y' : 'ies'} × ₹${unitPrice.toFixed(2)}`;
       }
 
       function validFile(file) {
         if (!file) return 'Choose a document to continue.';
         const extension = file.name.split('.').pop().toLowerCase();
         if (!allowedExtensions.has(extension) || !allowedTypes.has(file.type)) return 'Choose a PDF, PNG, or JPG image.';
+        if (elements.printType.value === 'photo' && !['png', 'jpg', 'jpeg'].includes(extension)) return 'Photo printing requires a JPG or PNG image.';
         if (file.size > 25 * 1024 * 1024) return 'The file must be 25 MB or smaller.';
         return '';
       }
@@ -224,7 +248,22 @@
         elements.fileError.classList.toggle('hidden', !error);
         elements.fileLabel.textContent = file && !error ? file.name : 'Tap to choose a file';
       });
-      [elements.colorMode, elements.pageCount, elements.copies].forEach((element) => element.addEventListener('input', updatePrice));
+      [elements.printType, elements.paperFinish, elements.colorMode, elements.pageCount, elements.copies].forEach((element) => element.addEventListener('input', updatePrice));
+      elements.printType.addEventListener('change', () => {
+        const isPhoto = elements.printType.value === 'photo';
+        if (isPhoto) {
+          elements.colorMode.value = 'color';
+          elements.colorMode.disabled = true;
+          elements.pageCount.value = '1';
+        } else {
+          elements.colorMode.disabled = false;
+        }
+        elements.pageCount.readOnly = isPhoto || Boolean(elements.file.files[0] && ['png', 'jpg', 'jpeg'].includes(elements.file.files[0].name.split('.').pop().toLowerCase()));
+        const error = validFile(elements.file.files[0]);
+        elements.fileError.textContent = error;
+        elements.fileError.classList.toggle('hidden', !error);
+        updatePrice();
+      });
 
       elements.form.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -240,6 +279,10 @@
         }
         const body = new FormData(elements.form);
         body.set('shopId', shop.id);
+        body.set('printType', elements.printType.value);
+        body.set('paperFinish', elements.paperFinish.value);
+        body.set('colorMode', elements.printType.value === 'photo' ? 'color' : elements.colorMode.value);
+        body.set('pageCount', elements.printType.value === 'photo' ? '1' : String(quote.pageCount));
         elements.submit.disabled = true;
         elements.submitLabel.textContent = 'Uploading securely…';
         elements.spinner.classList.remove('hidden');
@@ -275,9 +318,21 @@
           if (!response.ok || !result.success) throw new Error(result.message || 'Shop details could not be loaded.');
           shop = result.shop;
           elements.shopName.textContent = shop.name || 'QuickPrint Station';
+          elements.printType.querySelector('option[value="document"]').disabled = !shop.printOptions.documentEnabled;
+          elements.printType.querySelector('option[value="photo"]').disabled = !shop.printOptions.photoEnabled;
+          elements.paperFinish.querySelector('option[value="glossy"]').disabled = !shop.printOptions.glossyEnabled;
+          if (!shop.printOptions.documentEnabled && shop.printOptions.photoEnabled) elements.printType.value = 'photo';
+          if (!shop.printOptions.glossyEnabled) elements.paperFinish.value = 'plain';
           elements.rateStatus.textContent = `B&W ₹${Number(shop.rates.bw).toFixed(2)} · Color ₹${Number(shop.rates.color).toFixed(2)} / page`;
+          elements.printType.disabled = false;
+          elements.paperFinish.disabled = false;
           elements.colorMode.disabled = false;
           elements.submit.disabled = false;
+          if (elements.printType.value === 'photo') {
+            elements.colorMode.value = 'color';
+            elements.colorMode.disabled = true;
+            elements.pageCount.value = '1';
+          }
           elements.submitLabel.textContent = 'Create print order';
           updatePrice();
         } catch (error) {

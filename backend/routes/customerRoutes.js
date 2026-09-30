@@ -54,7 +54,23 @@ function normalizeShop(shop) {
   const bw = Number(rates.bw);
   const color = Number(rates.color);
   if (!Number.isFinite(bw) || bw < 0 || !Number.isFinite(color) || color < 0) return null;
-  return { id: String(shop.id || shop.shopId || shop._id || ''), name: String(shop.name || shop.shopName || 'Print shop'), upiVpa, rates: { bw, color } };
+  const printOptions = shop.printOptions || {};
+  const normalizedOptions = {
+    documentEnabled: printOptions.documentEnabled !== false,
+    photoEnabled: printOptions.photoEnabled === true,
+    photoPrice: Number(printOptions.photoPrice || 0),
+    glossyEnabled: printOptions.glossyEnabled === true,
+    glossySurchargePerPage: Number(printOptions.glossySurchargePerPage || 0),
+  };
+  if (!Number.isFinite(normalizedOptions.photoPrice) || normalizedOptions.photoPrice < 0 ||
+    !Number.isFinite(normalizedOptions.glossySurchargePerPage) || normalizedOptions.glossySurchargePerPage < 0) return null;
+  return {
+    id: String(shop.id || shop.shopId || shop._id || ''),
+    name: String(shop.name || shop.shopName || 'Print shop'),
+    upiVpa,
+    rates: { bw, color },
+    printOptions: normalizedOptions,
+  };
 }
 
 async function findShop(request, shopId) {
@@ -145,6 +161,7 @@ router.get('/shops/:shopId', async (request, response) => {
         name: result.shop.name,
         upiVpa: result.shop.upiVpa,
         rates: result.shop.rates,
+        printOptions: result.shop.printOptions,
       }
     });
   } catch (_error) { return response.status(500).json({ success: false, message: 'Could not load shop details.' }); }
@@ -177,16 +194,33 @@ router.post('/orders', (request, response) => {
       const pageCount = Number(request.body.pageCount);
       const copies = Number(request.body.copies);
       const colorMode = request.body.colorMode;
+      const printType = request.body.printType || 'document';
+      const paperFinish = request.body.paperFinish || 'plain';
       const actualPageCount = await getActualPageCount(request.file);
       if (!Number.isInteger(pageCount) || pageCount < 1 || pageCount > 500 ||
         actualPageCount === null || actualPageCount < 1 || actualPageCount > 500 || pageCount !== actualPageCount ||
-        !Number.isInteger(copies) || copies < 1 || copies > 100 || !['bw', 'color'].includes(colorMode)) {
+        !Number.isInteger(copies) || copies < 1 || copies > 100 || !['bw', 'color'].includes(colorMode) ||
+        !['document', 'photo'].includes(printType) || !['plain', 'glossy'].includes(paperFinish)) {
         await fs.promises.unlink(uploadedPath).catch(() => { });
         return response.status(400).json({ success: false, message: 'Print settings are invalid or the page count does not match the document.' });
       }
 
       const shop = shopResult.shop;
-      const amountPaise = Math.round(pageCount * copies * shop.rates[colorMode] * 100);
+      const imageFile = ['.png', '.jpg', '.jpeg'].includes(path.extname(request.file.originalname).toLowerCase());
+      const options = shop.printOptions;
+      if (
+        (printType === 'document' && !options.documentEnabled) ||
+        (printType === 'photo' && (!options.photoEnabled || !imageFile || actualPageCount !== 1 || colorMode !== 'color')) ||
+        (paperFinish === 'glossy' && !options.glossyEnabled)
+      ) {
+        await fs.promises.unlink(uploadedPath).catch(() => { });
+        return response.status(400).json({ success: false, message: 'This shop does not offer the selected print option.' });
+      }
+      const basePrice = printType === 'photo' ? options.photoPrice : shop.rates[colorMode] * pageCount;
+      const glossyPrice = paperFinish === 'glossy'
+        ? options.glossySurchargePerPage * (printType === 'photo' ? 1 : pageCount)
+        : 0;
+      const amountPaise = Math.round((basePrice + glossyPrice) * copies * 100);
       if (!Number.isSafeInteger(amountPaise)) {
         await fs.promises.unlink(uploadedPath).catch(() => { });
         return response.status(400).json({ success: false, message: 'The calculated print price is outside the supported range.' });
@@ -214,6 +248,8 @@ router.post('/orders', (request, response) => {
         pageCount: actualPageCount,
         copies,
         colorMode,
+        printType,
+        paperFinish,
         amount,
         totalAmount: amount,
         status: 'AWAITING_PAYMENT',
@@ -224,7 +260,7 @@ router.post('/orders', (request, response) => {
       order.upiUrl = makeUpiUrl(shop, order);
       return response.status(201).json({
         success: true,
-        order: { orderId, shopName: order.shopName, pageCount, copies, colorMode, amount, status: order.status, upiUrl: order.upiUrl, expiresAt: order.expiresAt.toISOString() }
+        order: { orderId, shopName: order.shopName, pageCount, copies, colorMode, printType, paperFinish, amount, status: order.status, upiUrl: order.upiUrl, expiresAt: order.expiresAt.toISOString() }
       });
     } catch (_error) {
       if (uploadedPath) await fs.promises.unlink(uploadedPath).catch(() => { });

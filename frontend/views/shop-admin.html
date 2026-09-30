@@ -242,6 +242,135 @@
       font-variant-numeric: tabular-nums;
     }
 
+    .queue-section {
+      margin-bottom: 30px;
+    }
+
+    .queue-heading-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .queue-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .queue-item {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      min-height: 66px;
+      padding: 10px 12px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 5px;
+    }
+
+    .queue-item.drag-over {
+      border-color: var(--accent);
+      box-shadow: inset 0 2px 0 var(--accent);
+    }
+
+    .queue-drag-handle {
+      width: 34px;
+      height: 38px;
+      color: var(--muted);
+      background: #f7f8fa;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      cursor: grab;
+    }
+
+    .queue-drag-handle:active {
+      cursor: grabbing;
+    }
+
+    .queue-details {
+      min-width: 0;
+    }
+
+    .queue-job-name {
+      overflow: hidden;
+      font-weight: 650;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .queue-job-meta {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .queue-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .queue-move {
+      min-width: 34px;
+      min-height: 34px;
+      color: var(--ink);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .queue-move:disabled {
+      color: #a5adb5;
+      cursor: default;
+    }
+
+    .queue-empty {
+      padding: 20px 16px;
+      color: var(--muted);
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 5px;
+    }
+
+    .settings-options {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px 20px;
+      grid-column: 1 / -1;
+      padding-top: 15px;
+      border-top: 1px solid var(--line);
+    }
+
+    .option-toggle {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-height: 40px;
+      color: #33414d;
+      font-weight: 600;
+    }
+
+    .option-toggle input {
+      width: 18px;
+      min-height: 18px;
+      accent-color: var(--accent);
+    }
+
+    .settings-options .rate-field {
+      align-content: start;
+    }
+
+    .settings-options small {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 400;
+      line-height: 1.4;
+    }
+
     .rates-section {
       margin-bottom: 30px;
     }
@@ -548,6 +677,10 @@
         gap: 13px;
       }
 
+      .settings-options {
+        grid-template-columns: 1fr;
+      }
+
       .primary-button {
         width: 100%;
       }
@@ -555,6 +688,11 @@
       .section-heading {
         align-items: start;
         flex-direction: column;
+      }
+
+      .queue-heading-actions {
+        width: 100%;
+        justify-content: space-between;
       }
 
       .agent-token-form {
@@ -630,6 +768,18 @@
       </div>
     </section>
 
+    <section class="queue-section" aria-labelledby="queue-heading">
+      <div class="section-heading">
+        <h2 id="queue-heading">Print queue</h2>
+        <div class="queue-heading-actions">
+          <span id="queue-count" class="section-note">Paid orders print in queue order</span>
+          <button id="refresh-queue" class="quiet-button" type="button">Refresh</button>
+        </div>
+      </div>
+      <ol id="print-queue" class="queue-list" aria-live="polite"></ol>
+      <p id="queue-feedback" class="feedback" role="status" aria-live="polite"></p>
+    </section>
+
     <section class="rates-section" aria-labelledby="rates-heading">
       <div class="section-heading">
         <h2 id="rates-heading">Page rates</h2>
@@ -651,6 +801,21 @@
           <input id="upi-id" type="text" maxlength="255" autocomplete="off" placeholder="shopname@bank">
           <small>Customers use this UPI ID to pay for print orders.</small>
         </label>
+        <div class="settings-options" aria-label="Customer print options">
+          <label class="option-toggle"><input id="document-enabled" type="checkbox"> Document and form printing</label>
+          <label class="option-toggle"><input id="photo-enabled" type="checkbox"> Photo printing</label>
+          <label class="rate-field" for="photo-price">Photo price per print
+            <span class="input-wrap"><span class="currency" aria-hidden="true">₹</span><input id="photo-price"
+                class="rate-input" type="number" min="0" max="100000" step="0.01" required></span>
+            <small>Charged for each photo copy.</small>
+          </label>
+          <label class="option-toggle"><input id="glossy-enabled" type="checkbox"> Offer glossy paper</label>
+          <label class="rate-field" for="glossy-surcharge">Glossy surcharge per printed page/photo
+            <span class="input-wrap"><span class="currency" aria-hidden="true">₹</span><input id="glossy-surcharge"
+                class="rate-input" type="number" min="0" max="100000" step="0.01" required></span>
+            <small>Added to the selected print price.</small>
+          </label>
+        </div>
         <button id="save-rates" class="primary-button" type="submit">Save shop settings</button>
       </form>
       <p id="rate-feedback" class="feedback" role="status" aria-live="polite"></p>
@@ -715,7 +880,10 @@
     const rateFeedback = document.getElementById('rate-feedback');
     const agentTokenFeedback = document.getElementById('agent-token-feedback');
     const agentTokenList = document.getElementById('agent-token-list');
+    const queueList = document.getElementById('print-queue');
+    const queueFeedback = document.getElementById('queue-feedback');
     const money = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' });
+    let queueJobs = [];
 
     function localDateString(date) {
       const year = date.getFullYear();
@@ -779,6 +947,7 @@
           SUBSCRIPTION_EXPIRED: 'This shop subscription has expired.',
           SHOP_SCOPE_FORBIDDEN: 'Your account cannot access this shop.',
           SHOP_NOT_FOUND: 'Shop was not found.',
+          PRINT_QUEUE_CHANGED: 'The queue changed while you were editing. It has been refreshed.',
         };
         const error = new Error(messages[body.error] || body.message || `Request failed (${response.status})`);
         error.code = body.error;
@@ -846,6 +1015,116 @@
         row.append(statusCell);
         historyBody.append(row);
       }
+    }
+
+    function renderPrintQueue(jobs) {
+      queueJobs = jobs;
+      queueList.replaceChildren();
+      document.getElementById('queue-count').textContent = `${jobs.length} paid ${jobs.length === 1 ? 'order' : 'orders'} · drag to reprioritize`;
+      if (!jobs.length) {
+        const empty = document.createElement('li');
+        empty.className = 'queue-empty';
+        empty.textContent = 'No paid orders waiting to print.';
+        queueList.append(empty);
+        return;
+      }
+
+      for (const [index, job] of jobs.entries()) {
+        const item = document.createElement('li');
+        item.className = 'queue-item';
+        item.addEventListener('dragover', (event) => {
+          event.preventDefault();
+          item.classList.add('drag-over');
+        });
+        item.addEventListener('dragleave', () => item.classList.remove('drag-over'));
+        item.addEventListener('drop', (event) => {
+          event.preventDefault();
+          item.classList.remove('drag-over');
+          const movingId = event.dataTransfer.getData('text/plain');
+          if (movingId && movingId !== job.id) reorderQueue(movingId, job.id);
+        });
+
+        const handle = document.createElement('button');
+        handle.className = 'queue-drag-handle';
+        handle.type = 'button';
+        handle.draggable = true;
+        handle.textContent = '::';
+        handle.title = 'Drag to change print order';
+        handle.setAttribute('aria-label', `Drag ${job.documentName || job.fileName || 'print order'} to change queue position`);
+        handle.addEventListener('dragstart', (event) => {
+          event.dataTransfer.setData('text/plain', job.id);
+          event.dataTransfer.effectAllowed = 'move';
+        });
+
+        const details = document.createElement('div');
+        details.className = 'queue-details';
+        const name = document.createElement('div');
+        name.className = 'queue-job-name';
+        name.textContent = `${index + 1}. ${job.documentName || job.fileName || 'Print order'}`;
+        const metadata = document.createElement('div');
+        metadata.className = 'queue-job-meta';
+        metadata.textContent = `${job.pageCount} page${job.pageCount === 1 ? '' : 's'} × ${job.copies || 1} · ${job.colorMode === 'color' ? 'Color' : 'B&W'} · ${job.printType === 'photo' ? 'Photo' : 'Document'} · ${job.paperFinish || 'plain'} · ${money.format(job.totalAmount)}`;
+        details.append(name, metadata);
+
+        const actions = document.createElement('div');
+        actions.className = 'queue-actions';
+        for (const [direction, label, disabled] of [
+          ['up', 'Move up', index === 0],
+          ['down', 'Move down', index === jobs.length - 1],
+        ]) {
+          const button = document.createElement('button');
+          button.className = 'queue-move';
+          button.type = 'button';
+          button.disabled = disabled;
+          button.title = label;
+          button.setAttribute('aria-label', `${label}: ${job.documentName || job.fileName || 'print order'}`);
+          button.textContent = direction === 'up' ? '↑' : '↓';
+          button.addEventListener('click', () => moveQueueItem(index, direction === 'up' ? -1 : 1));
+          actions.append(button);
+        }
+        item.append(handle, details, actions);
+        queueList.append(item);
+      }
+    }
+
+    async function loadPrintQueue() {
+      const data = await apiRequest(`/api/shops/${encodeURIComponent(shopId)}/print-queue`);
+      renderPrintQueue(data.jobs);
+    }
+
+    async function saveQueueOrder(nextJobs) {
+      renderPrintQueue(nextJobs);
+      setStatus(queueFeedback, 'Saving queue order…');
+      try {
+        const result = await apiRequest(`/api/shops/${encodeURIComponent(shopId)}/print-queue`, {
+          method: 'PUT',
+          body: JSON.stringify({ jobIds: nextJobs.map((job) => job.id) }),
+        });
+        renderPrintQueue(result.jobs);
+        setStatus(queueFeedback, 'Print order saved.', 'success');
+      } catch (error) {
+        setStatus(queueFeedback, error.message || 'Could not save print order.', 'error');
+        await loadPrintQueue();
+      }
+    }
+
+    function moveQueueItem(fromIndex, offset) {
+      const toIndex = fromIndex + offset;
+      if (toIndex < 0 || toIndex >= queueJobs.length) return;
+      const nextJobs = [...queueJobs];
+      const [job] = nextJobs.splice(fromIndex, 1);
+      nextJobs.splice(toIndex, 0, job);
+      saveQueueOrder(nextJobs);
+    }
+
+    function reorderQueue(movingId, targetId) {
+      const nextJobs = [...queueJobs];
+      const fromIndex = nextJobs.findIndex((job) => job.id === movingId);
+      const toIndex = nextJobs.findIndex((job) => job.id === targetId);
+      if (fromIndex < 0 || toIndex < 0) return;
+      const [job] = nextJobs.splice(fromIndex, 1);
+      nextJobs.splice(toIndex - (fromIndex < toIndex ? 1 : 0), 0, job);
+      saveQueueOrder(nextJobs);
     }
 
     async function loadAgentTokens() {
@@ -922,10 +1201,16 @@
         document.getElementById('bw-rate').value = shopSettings.rates.blackAndWhitePerPage;
         document.getElementById('color-rate').value = shopSettings.rates.colorPerPage;
         document.getElementById('upi-id').value = shopSettings.upiId || '';
+        const printOptions = shopSettings.printOptions || {};
+        document.getElementById('document-enabled').checked = printOptions.documentEnabled !== false;
+        document.getElementById('photo-enabled').checked = printOptions.photoEnabled === true;
+        document.getElementById('photo-price').value = printOptions.photoPrice || 0;
+        document.getElementById('glossy-enabled').checked = printOptions.glossyEnabled === true;
+        document.getElementById('glossy-surcharge').value = printOptions.glossySurchargePerPage || 0;
         document.getElementById('print-count').textContent = Number(data.dailySummary.totalPrints || 0).toLocaleString('en-IN');
         document.getElementById('print-revenue').textContent = money.format(Number(data.dailySummary.revenue || 0));
         renderHistory(data.recentJobs || []);
-        await loadAgentTokens();
+        await Promise.all([loadAgentTokens(), loadPrintQueue()]);
         setStatus(pageStatus, 'Updated just now.');
       } catch (error) {
         if (error.code === 'SUBSCRIPTION_EXPIRED') {
@@ -958,6 +1243,13 @@
               colorPerPage: Number(document.getElementById('color-rate').value),
             },
             upiId: document.getElementById('upi-id').value.trim(),
+            printOptions: {
+              documentEnabled: document.getElementById('document-enabled').checked,
+              photoEnabled: document.getElementById('photo-enabled').checked,
+              photoPrice: Number(document.getElementById('photo-price').value),
+              glossyEnabled: document.getElementById('glossy-enabled').checked,
+              glossySurchargePerPage: Number(document.getElementById('glossy-surcharge').value),
+            },
           }),
         });
         setStatus(rateFeedback, 'Shop settings saved.', 'success');
@@ -993,6 +1285,19 @@
     document.getElementById('copy-agent-token').addEventListener('click', async () => {
       await navigator.clipboard.writeText(document.getElementById('agent-token-value').textContent);
       setStatus(agentTokenFeedback, 'Agent token copied.', 'success');
+    });
+
+    document.getElementById('refresh-queue').addEventListener('click', async () => {
+      const button = document.getElementById('refresh-queue');
+      button.disabled = true;
+      try {
+        await loadPrintQueue();
+        setStatus(queueFeedback, 'Print queue refreshed.', 'success');
+      } catch (error) {
+        setStatus(queueFeedback, error.message || 'Could not refresh print queue.', 'error');
+      } finally {
+        button.disabled = false;
+      }
     });
 
     async function submitShopAuth(path, form) {

@@ -4,7 +4,17 @@ const express = require('express');
 const { createShopRouter } = require('../shopRoutes');
 
 const storedRates = { blackAndWhitePerPage: 2, colorPerPage: 8 };
-const storedSettings = { rates: storedRates, upiId: 'shop@upi' };
+const storedSettings = {
+  rates: storedRates,
+  upiId: 'shop@upi',
+  printOptions: {
+    documentEnabled: true,
+    photoEnabled: false,
+    photoPrice: 15,
+    glossyEnabled: false,
+    glossySurchargePerPage: 0,
+  },
+};
 let lastUpdatedRates;
 let lastUpdatedSettings;
 let lastJobResult;
@@ -30,6 +40,8 @@ before(async () => {
   const printJobRepository = {
     getSummary: async () => ({ totalPrints: 12, revenue: 96 }),
     listForShop: async () => ({ jobs: [{ id: 'job-1', status: 'PRINTED' }], total: 1 }),
+    listPrintQueue: async () => [{ id: 'job-1', status: 'READY_TO_PRINT' }],
+    reorderPrintQueue: async (_shopId, jobIds) => ({ jobs: jobIds.map((id) => ({ id, status: 'READY_TO_PRINT' })) }),
     updateResult: async (shopId, jobId, result) => {
       if (shopId !== 'shop-1' || jobId !== 'job-1') return null;
       lastJobResult = result;
@@ -93,6 +105,26 @@ test('shop scope blocks requests for a different shop', async () => {
   assert.deepEqual(await response.json(), { error: 'SHOP_SCOPE_FORBIDDEN' });
 });
 
+test('shop admin can reorder their print queue', async () => {
+  const response = await fetch(`${baseUrl}/api/shops/shop-1/print-queue`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json', 'x-test-shop-id': 'shop-1' },
+    body: JSON.stringify({ jobIds: ['job-2', 'job-1'] }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).jobs.map((job) => job.id), ['job-2', 'job-1']);
+});
+
+test('print agents cannot access shop queue controls', async () => {
+  const response = await fetch(`${baseUrl}/api/shops/shop-1/print-queue`, {
+    headers: { 'x-test-shop-id': 'shop-1', 'x-test-role': 'PRINT_AGENT' },
+  });
+
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: 'SHOP_ADMIN_REQUIRED' });
+});
+
 test('subscription middleware can stop dashboard requests', async () => {
   const response = await fetch(`${baseUrl}/api/shops/shop-1/dashboard`, {
     headers: { 'x-test-shop-id': 'shop-1', 'x-test-expired': 'true' },
@@ -128,6 +160,13 @@ test('shop admins can update rates and the customer UPI ID together', async () =
   const settings = {
     rates: { blackAndWhitePerPage: 2.5, colorPerPage: 9 },
     upiId: 'central.prints@bank',
+    printOptions: {
+      documentEnabled: true,
+      photoEnabled: true,
+      photoPrice: 20,
+      glossyEnabled: true,
+      glossySurchargePerPage: 5,
+    },
   };
   const response = await fetch(`${baseUrl}/api/shops/shop-1/settings`, {
     method: 'PUT',

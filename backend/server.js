@@ -52,6 +52,7 @@ function createApp({ pool, configuration, logger = console }) {
         bw: shop.rates.blackAndWhitePerPage,
         color: shop.rates.colorPerPage,
       },
+      printOptions: shop.printOptions,
     };
   };
 

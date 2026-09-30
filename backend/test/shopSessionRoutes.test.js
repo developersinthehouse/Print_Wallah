@@ -35,9 +35,9 @@ before(async () => {
   const setupToken = randomBytes(32).toString('base64url');
   const setupTokenHash = createHash('sha256').update(setupToken).digest('hex');
   await pool.query(
-    `INSERT INTO shop_admin_credentials (shop_id, setup_token_hash, setup_expires_at)
-     VALUES ($1, $2, $3)`,
-    ['shop-auth-1', setupTokenHash, new Date(Date.now() + 86400000)],
+    `INSERT INTO shop_admin_users (id, shop_id, email, setup_token_hash, setup_expires_at)
+     VALUES ($1, $2, $3, $4, $5)`,
+    ['admin-shop-auth-1', 'shop-auth-1', 'owner@example.com', setupTokenHash, new Date(Date.now() + 86400000)],
   );
   const app = express();
   app.use('/api/shop-auth', createShopSessionRouter({

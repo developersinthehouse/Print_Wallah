@@ -8,6 +8,13 @@ function mapShop(row) {
     ownerName: row.owner_name,
     ownerEmail: row.owner_email,
     upiVpa: row.upi_vpa,
+    printOptions: {
+      documentEnabled: row.document_print_enabled,
+      photoEnabled: row.photo_print_enabled,
+      photoPrice: Number(row.photo_print_price),
+      glossyEnabled: row.glossy_print_enabled,
+      glossySurchargePerPage: Number(row.glossy_surcharge_per_page),
+    },
     rates: {
       blackAndWhitePerPage: Number(row.black_and_white_per_page),
       colorPerPage: Number(row.color_per_page),
@@ -32,6 +39,9 @@ function mapJob(row) {
       : row.payment_status === 'EXPIRED' ? 'PAYMENT_EXPIRED' : row.status,
     copies: row.copies || 1,
     colorMode: row.color_mode,
+    printType: row.print_type || 'document',
+    paperFinish: row.paper_finish || 'plain',
+    queuePosition: Number(row.queue_position || 0),
     error: row.print_error,
     createdAt: row.created_at,
     expiresAt: row.expires_at,
@@ -74,7 +84,9 @@ function createPostgresRepositories(pool) {
 
     async getShopSettings(shopId) {
       const result = await pool.query(
-        `SELECT black_and_white_per_page, color_per_page, upi_vpa
+        `SELECT black_and_white_per_page, color_per_page, upi_vpa,
+          document_print_enabled, photo_print_enabled, photo_print_price,
+          glossy_print_enabled, glossy_surcharge_per_page
          FROM shop_profiles WHERE id = $1`,
         [shopId],
       );
@@ -85,16 +97,31 @@ function createPostgresRepositories(pool) {
           colorPerPage: Number(row.color_per_page),
         },
         upiId: row.upi_vpa || '',
+        printOptions: {
+          documentEnabled: row.document_print_enabled,
+          photoEnabled: row.photo_print_enabled,
+          photoPrice: Number(row.photo_print_price),
+          glossyEnabled: row.glossy_print_enabled,
+          glossySurchargePerPage: Number(row.glossy_surcharge_per_page),
+        },
       } : null;
     },
 
-    async updateShopSettings(shopId, { rates, upiId }) {
+    async updateShopSettings(shopId, { rates, upiId, printOptions }) {
       const result = await pool.query(
         `UPDATE shop_profiles
-         SET black_and_white_per_page = $2, color_per_page = $3, upi_vpa = $4, updated_at = NOW()
+         SET black_and_white_per_page = $2, color_per_page = $3, upi_vpa = $4,
+             document_print_enabled = $5, photo_print_enabled = $6, photo_print_price = $7,
+             glossy_print_enabled = $8, glossy_surcharge_per_page = $9, updated_at = NOW()
          WHERE id = $1
-         RETURNING black_and_white_per_page, color_per_page, upi_vpa`,
-        [shopId, rates.blackAndWhitePerPage, rates.colorPerPage, upiId],
+         RETURNING black_and_white_per_page, color_per_page, upi_vpa,
+                   document_print_enabled, photo_print_enabled, photo_print_price,
+                   glossy_print_enabled, glossy_surcharge_per_page`,
+        [
+          shopId, rates.blackAndWhitePerPage, rates.colorPerPage, upiId,
+          printOptions.documentEnabled, printOptions.photoEnabled, printOptions.photoPrice,
+          printOptions.glossyEnabled, printOptions.glossySurchargePerPage,
+        ],
       );
       const row = result.rows[0];
       return row ? {
@@ -103,6 +130,13 @@ function createPostgresRepositories(pool) {
           colorPerPage: Number(row.color_per_page),
         },
         upiId: row.upi_vpa || '',
+        printOptions: {
+          documentEnabled: row.document_print_enabled,
+          photoEnabled: row.photo_print_enabled,
+          photoPrice: Number(row.photo_print_price),
+          glossyEnabled: row.glossy_print_enabled,
+          glossySurchargePerPage: Number(row.glossy_surcharge_per_page),
+        },
       } : null;
     },
 
@@ -225,19 +259,29 @@ function createPostgresRepositories(pool) {
 
   const printJobRepository = {
     async createCustomerOrder(order) {
-      const result = await pool.query(
-        `INSERT INTO print_jobs
-          (id, shop_id, document_name, file_name, file_url, page_count, total_amount,
-           status, created_at, copies, color_mode, storage_key, expires_at, payment_status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'READY_TO_PRINT', $8, $9, $10, $11, $12, 'PENDING')
-         RETURNING *`,
-        [
-          order.id, order.shopId, order.documentName, order.fileName, order.fileUrl,
-          order.pageCount, order.totalAmount, order.createdAt, order.copies,
-          order.colorMode, order.storageKey, order.expiresAt,
-        ],
-      );
-      return mapJob(result.rows[0]);
+      return withTransaction(pool, async (client) => {
+        const shop = await client.query('SELECT id FROM shop_profiles WHERE id = $1 FOR UPDATE', [order.shopId]);
+        if (shop.rowCount === 0) throw new Error('Cannot queue an order for a missing shop');
+        const positionResult = await client.query(
+          'SELECT COALESCE(MAX(queue_position), 0) + 1 AS next_position FROM print_jobs WHERE shop_id = $1',
+          [order.shopId],
+        );
+        const result = await client.query(
+          `INSERT INTO print_jobs
+            (id, shop_id, document_name, file_name, file_url, page_count, total_amount,
+             status, created_at, copies, color_mode, storage_key, expires_at, payment_status,
+             queue_position, print_type, paper_finish)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'READY_TO_PRINT', $8, $9, $10, $11, $12, 'PENDING', $13, $14, $15)
+           RETURNING *`,
+          [
+            order.id, order.shopId, order.documentName, order.fileName, order.fileUrl,
+            order.pageCount, order.totalAmount, order.createdAt, order.copies,
+            order.colorMode, order.storageKey, order.expiresAt, positionResult.rows[0].next_position,
+            order.printType || 'document', order.paperFinish || 'plain',
+          ],
+        );
+        return mapJob(result.rows[0]);
+      });
     },
 
     async confirmCustomerPayment(shopId, jobId, paymentReference) {
@@ -323,6 +367,9 @@ function createPostgresRepositories(pool) {
         }
       }
       const whereClause = conditions.join(' AND ');
+      const orderClause = status === 'READY_TO_PRINT'
+        ? 'queue_position ASC, created_at ASC, id ASC'
+        : 'created_at DESC, id DESC';
       const countResult = await pool.query(
         `SELECT COUNT(*)::int AS total FROM print_jobs WHERE ${whereClause}`,
         values,
@@ -330,10 +377,62 @@ function createPostgresRepositories(pool) {
       const pageValues = [...values, limit, offset];
       const result = await pool.query(
         `SELECT * FROM print_jobs WHERE ${whereClause}
-         ORDER BY created_at DESC LIMIT $${pageValues.length - 1} OFFSET $${pageValues.length}`,
+         ORDER BY ${orderClause} LIMIT $${pageValues.length - 1} OFFSET $${pageValues.length}`,
         pageValues,
       );
       return { jobs: result.rows.map(mapJob), total: countResult.rows[0].total };
+    },
+
+    async listPrintQueue(shopId) {
+      const result = await pool.query(
+        `SELECT * FROM print_jobs
+         WHERE shop_id = $1 AND status = 'READY_TO_PRINT' AND payment_status = 'CONFIRMED'
+         ORDER BY queue_position ASC, created_at ASC, id ASC`,
+        [shopId],
+      );
+      return result.rows.map(mapJob);
+    },
+
+    async reorderPrintQueue(shopId, jobIds) {
+      return withTransaction(pool, async (client) => {
+        const shop = await client.query('SELECT id FROM shop_profiles WHERE id = $1 FOR UPDATE', [shopId]);
+        if (shop.rowCount === 0) return null;
+        const current = await client.query(
+          `SELECT id FROM print_jobs
+           WHERE shop_id = $1 AND status = 'READY_TO_PRINT' AND payment_status = 'CONFIRMED'
+           ORDER BY queue_position ASC, created_at ASC, id ASC FOR UPDATE`,
+          [shopId],
+        );
+        const currentIds = current.rows.map((row) => row.id);
+        if (currentIds.length !== jobIds.length || currentIds.some((id) => !jobIds.includes(id))) {
+          return { conflict: true };
+        }
+        for (const [index, jobId] of jobIds.entries()) {
+          await client.query(
+            'UPDATE print_jobs SET queue_position = $3 WHERE shop_id = $1 AND id = $2',
+            [shopId, jobId, index + 1],
+          );
+        }
+        const pending = await client.query(
+          `SELECT id FROM print_jobs
+           WHERE shop_id = $1 AND status = 'READY_TO_PRINT' AND payment_status = 'PENDING'
+           ORDER BY created_at ASC, id ASC FOR UPDATE`,
+          [shopId],
+        );
+        for (const [index, row] of pending.rows.entries()) {
+          await client.query(
+            'UPDATE print_jobs SET queue_position = $3 WHERE shop_id = $1 AND id = $2',
+            [shopId, row.id, jobIds.length + index + 1],
+          );
+        }
+        const reordered = await client.query(
+          `SELECT * FROM print_jobs
+           WHERE shop_id = $1 AND status = 'READY_TO_PRINT' AND payment_status = 'CONFIRMED'
+           ORDER BY queue_position ASC, created_at ASC, id ASC`,
+          [shopId],
+        );
+        return { jobs: reordered.rows.map(mapJob) };
+      });
     },
 
     async updateResult(shopId, jobId, { status, error }) {

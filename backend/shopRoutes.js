@@ -61,6 +61,16 @@ function isValidUpiId(value) {
   );
 }
 
+function isValidPrintOptions(options) {
+  return Boolean(options) &&
+    typeof options.documentEnabled === 'boolean' &&
+    typeof options.photoEnabled === 'boolean' &&
+    (options.documentEnabled || options.photoEnabled) &&
+    typeof options.glossyEnabled === 'boolean' &&
+    isValidRate(options.photoPrice) &&
+    isValidRate(options.glossySurchargePerPage);
+}
+
 function createShopRouter({
   shopRepository,
   printJobRepository,
@@ -149,21 +159,62 @@ function createShopRouter({
     if (request.auth?.role !== 'SHOP_ADMIN') {
       return response.status(403).json({ error: 'SHOP_ADMIN_REQUIRED' });
     }
-    const { rates, upiId } = request.body || {};
+    const { rates, upiId, printOptions } = request.body || {};
     if (
       !shopRepository.updateShopSettings ||
       !rates ||
       !isValidRate(rates.blackAndWhitePerPage) ||
       !isValidRate(rates.colorPerPage) ||
-      !isValidUpiId(upiId)
+      !isValidUpiId(upiId) ||
+      !isValidPrintOptions(printOptions)
     ) {
       return response.status(400).json({ error: 'INVALID_SHOP_SETTINGS' });
     }
 
     try {
-      const settings = await shopRepository.updateShopSettings(request.params.shopId, { rates, upiId });
+      const settings = await shopRepository.updateShopSettings(request.params.shopId, { rates, upiId, printOptions });
       if (!settings) return response.status(404).json({ error: 'SHOP_NOT_FOUND' });
       return response.json({ settings });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.get('/:shopId/print-queue', async (request, response, next) => {
+    if (request.auth?.role !== 'SHOP_ADMIN') {
+      return response.status(403).json({ error: 'SHOP_ADMIN_REQUIRED' });
+    }
+    if (typeof printJobRepository.listPrintQueue !== 'function') {
+      return response.status(503).json({ error: 'PRINT_QUEUE_UNAVAILABLE' });
+    }
+    try {
+      const jobs = await printJobRepository.listPrintQueue(request.params.shopId);
+      return response.json({ jobs });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.put('/:shopId/print-queue', async (request, response, next) => {
+    if (request.auth?.role !== 'SHOP_ADMIN') {
+      return response.status(403).json({ error: 'SHOP_ADMIN_REQUIRED' });
+    }
+    const { jobIds } = request.body || {};
+    if (
+      !Array.isArray(jobIds) || jobIds.length > 500 ||
+      jobIds.some((id) => typeof id !== 'string' || !id || id.length > 120) ||
+      new Set(jobIds).size !== jobIds.length
+    ) {
+      return response.status(400).json({ error: 'INVALID_PRINT_QUEUE' });
+    }
+    if (typeof printJobRepository.reorderPrintQueue !== 'function') {
+      return response.status(503).json({ error: 'PRINT_QUEUE_UNAVAILABLE' });
+    }
+    try {
+      const result = await printJobRepository.reorderPrintQueue(request.params.shopId, jobIds);
+      if (!result) return response.status(404).json({ error: 'SHOP_NOT_FOUND' });
+      if (result.conflict) return response.status(409).json({ error: 'PRINT_QUEUE_CHANGED' });
+      return response.json({ jobs: result.jobs });
     } catch (error) {
       return next(error);
     }

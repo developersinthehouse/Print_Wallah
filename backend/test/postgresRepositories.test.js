@@ -60,10 +60,24 @@ test('migrations and repositories persist shop, print, renewal, and audit data',
   const updatedSettings = await repositories.shopRepository.updateShopSettings(shop.id, {
     rates: { blackAndWhitePerPage: 2.75, colorPerPage: 9.5 },
     upiId: 'central@upi',
+    printOptions: {
+      documentEnabled: true,
+      photoEnabled: true,
+      photoPrice: 18,
+      glossyEnabled: true,
+      glossySurchargePerPage: 4.5,
+    },
   });
   assert.deepEqual(updatedSettings, {
     rates: { blackAndWhitePerPage: 2.75, colorPerPage: 9.5 },
     upiId: 'central@upi',
+    printOptions: {
+      documentEnabled: true,
+      photoEnabled: true,
+      photoPrice: 18,
+      glossyEnabled: true,
+      glossySurchargePerPage: 4.5,
+    },
   });
   assert.deepEqual(await repositories.shopRepository.getShopSettings(shop.id), updatedSettings);
   assert.equal((await repositories.shopRepository.findById(shop.id)).upiVpa, 'central@upi');
@@ -203,6 +217,38 @@ test('customer orders persist pending payment and become agent jobs only after s
   )).confirmed, false);
 });
 
+test('shop queue reorder changes the order returned to the print agent', async () => {
+  const shop = await createShop('shop-queue-order', '2026-10-01T00:00:00.000Z');
+  const makeOrder = (id, createdAt) => repositories.printJobRepository.createCustomerOrder({
+    id,
+    shopId: shop.id,
+    documentName: `${id}.pdf`,
+    fileName: `${id}.pdf`,
+    fileUrl: `/api/shops/${shop.id}/print-jobs/${id}/file`,
+    pageCount: 1,
+    totalAmount: 2,
+    copies: 1,
+    colorMode: 'bw',
+    storageKey: `${id}.pdf`,
+    createdAt,
+    expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+  });
+  const first = await makeOrder('queue-first', new Date(NOW.getTime()));
+  const second = await makeOrder('queue-second', new Date(NOW.getTime() + 1000));
+  await repositories.printJobRepository.confirmCustomerPayment(shop.id, second.id, 'REF-SECOND');
+  await repositories.printJobRepository.confirmCustomerPayment(shop.id, first.id, 'REF-FIRST');
+
+  assert.deepEqual((await repositories.printJobRepository.listForShop(shop.id, {
+    status: 'READY_TO_PRINT', limit: 25, offset: 0,
+  })).jobs.map((job) => job.id), [first.id, second.id]);
+
+  const reordered = await repositories.printJobRepository.reorderPrintQueue(shop.id, [second.id, first.id]);
+  assert.deepEqual(reordered.jobs.map((job) => job.id), [second.id, first.id]);
+  assert.deepEqual((await repositories.printJobRepository.listForShop(shop.id, {
+    status: 'READY_TO_PRINT', limit: 25, offset: 0,
+  })).jobs.map((job) => job.id), [second.id, first.id]);
+});
+
 test('expiry locking is conditional and metrics classify expired shops', async () => {
   await createShop('shop-expired', '2026-09-27T00:00:00.000Z');
   const expiredShops = await repositories.shopRepository.findExpiredShops(NOW);
@@ -212,8 +258,8 @@ test('expiry locking is conditional and metrics classify expired shops', async (
   assert.equal(await repositories.shopRepository.lockIfExpired('shop-expired', NOW), false);
   assert.equal((await repositories.shopRepository.findById('shop-expired')).subscription_status, 'EXPIRED');
   assert.deepEqual(await repositories.shopRepository.getSubscriptionCounts(NOW), {
-    total: 3,
-    active: 2,
+    total: 4,
+    active: 3,
     expired: 1,
     locked: 0,
   });

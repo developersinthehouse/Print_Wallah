@@ -18,6 +18,7 @@ let pool;
 let server;
 let baseUrl;
 let customerOrderId;
+let photoOrderId;
 
 function makeToken(role, shopId) {
   const options = {
@@ -75,10 +76,12 @@ before(async () => {
 });
 
 after(async () => {
-  if (customerOrderId) {
-    const result = await pool.query('SELECT storage_key FROM print_jobs WHERE id = $1', [customerOrderId]);
-    if (result.rows[0]?.storage_key) {
-      await fs.unlink(path.join(customerRouter.uploadDirectory, result.rows[0].storage_key)).catch(() => { });
+  for (const orderId of [customerOrderId, photoOrderId]) {
+    if (orderId) {
+      const result = await pool.query('SELECT storage_key FROM print_jobs WHERE id = $1', [orderId]);
+      if (result.rows[0]?.storage_key) {
+        await fs.unlink(path.join(customerRouter.uploadDirectory, result.rows[0].storage_key)).catch(() => { });
+      }
     }
   }
   await new Promise((resolve, reject) => {
@@ -160,6 +163,13 @@ test('server mounts auth, onboarding, shop operations, renewals, and static admi
     body: JSON.stringify({
       rates: { blackAndWhitePerPage: 2, colorPerPage: 8 },
       upiId: 'owner@upi',
+      printOptions: {
+        documentEnabled: true,
+        photoEnabled: true,
+        photoPrice: 20,
+        glossyEnabled: true,
+        glossySurchargePerPage: 5,
+      },
     }),
   });
   assert.equal(settingsResponse.status, 200);
@@ -170,6 +180,13 @@ test('server mounts auth, onboarding, shop operations, renewals, and static admi
     name: 'Integrated Shop',
     upiVpa: 'owner@upi',
     rates: { bw: 2, color: 8 },
+    printOptions: {
+      documentEnabled: true,
+      photoEnabled: true,
+      photoPrice: 20,
+      glossyEnabled: true,
+      glossySurchargePerPage: 5,
+    },
   });
   const agentTokenResponse = await apiRequest(`/api/shops/${shopId}/agent-tokens`, shopToken, {
     method: 'POST',
@@ -234,6 +251,25 @@ test('server mounts auth, onboarding, shop operations, renewals, and static admi
   assert.equal(customerOrder.order.pageCount, 2);
   assert.equal(new URL(customerOrder.order.upiUrl).searchParams.get('pa'), 'owner@upi');
 
+  const photoForm = new FormData();
+  photoForm.set('shopId', shopId);
+  photoForm.set('pageCount', '1');
+  photoForm.set('copies', '2');
+  photoForm.set('colorMode', 'color');
+  photoForm.set('printType', 'photo');
+  photoForm.set('paperFinish', 'glossy');
+  photoForm.set('file', new Blob([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])], { type: 'image/png' }), 'photo.png');
+  const photoResponse = await fetch(`${baseUrl}/api/customer/orders`, {
+    method: 'POST',
+    body: photoForm,
+  });
+  assert.equal(photoResponse.status, 201);
+  const photoOrder = await photoResponse.json();
+  photoOrderId = photoOrder.order.orderId;
+  assert.equal(photoOrder.order.amount, 50);
+  assert.equal(photoOrder.order.printType, 'photo');
+  assert.equal(photoOrder.order.paperFinish, 'glossy');
+
   const forgedOrderForm = new FormData();
   forgedOrderForm.set('shopId', shopId);
   forgedOrderForm.set('pageCount', '1');
@@ -251,10 +287,11 @@ test('server mounts auth, onboarding, shop operations, renewals, and static admi
     shopToken,
   );
   const pendingJobs = (await pendingResponse.json()).jobs;
-  assert.equal(pendingJobs[0].id, customerOrderId);
-  assert.equal(pendingJobs[0].copies, 2);
+  const pendingJob = pendingJobs.find((job) => job.id === customerOrderId);
+  assert.ok(pendingJob);
+  assert.equal(pendingJob.copies, 2);
 
-  const pendingFileResponse = await apiRequest(pendingJobs[0].fileUrl, agentToken);
+  const pendingFileResponse = await apiRequest(pendingJob.fileUrl, agentToken);
   assert.equal(pendingFileResponse.status, 404);
   const forbiddenConfirmation = await apiRequest(
     `/api/shops/${shopId}/print-jobs/${customerOrderId}/payment-confirmation`,

@@ -36,6 +36,10 @@ When a super-admin onboards a shop, the result includes a one-time owner setup c
 
 The shop dashboard saves B&W/color page rates and the shop UPI ID through the authenticated `PUT /api/shops/:shopId/settings` endpoint. The dashboard response includes `shopSettings: { rates, upiId }`. Customer shop details expose the configured payee; customer orders create a UPI deep link and show the payee alongside it. Shop admins still manually verify transactions before print agents can download the document.
 
+Shop settings also control document/form orders, photo orders, and an optional glossy-paper surcharge. Customer shop details expose the enabled options, and the server calculates order totals from those values. Photo prices are per copy; glossy surcharges are per printed page or photo. Each job retains its print type and paper finish. Glossy orders still require glossy media loaded and configured on the local printer.
+
+Jobs receive a per-shop FIFO position when customers submit them, and only appear in the printer queue after payment is confirmed. Shop admins can reorder the paid queue with drag-and-drop or move controls; the agent's `READY_TO_PRINT` feed follows the saved order. Reorders are rejected if the queue changes concurrently.
+
 Compose stores local PostgreSQL data in the persistent Docker volume `print_wallah_pg_data` and binds its port only to `127.0.0.1`. Never commit `.env`; the example values are for local development only, not production credentials. Database behavior is covered with `pg-mem`; Docker/PostgreSQL was unavailable in the implementation environment, so the Compose service and real connection still need verification there.
 # Print Wallah Backend
 
