@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d1210">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Print Wallah: upload, configure and send your print order to a local print shop.">
+  <meta name="author" content="DEVELOPERS">
+  <title>Print Wallah</title>
+  <link rel="icon" id="favicon" href="/assets/print-wallah_logo.png">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/vendor/pdfjs/pdf.min.js" defer></script>
+  <script src="/customer.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="site-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Print Wallah home"><img id="brand-logo" class="brand-logo" src="/assets/logo.png" alt="Print Wallah"></a>
+      <div class="topbar-right"><span id="top-context" class="context-label"></span><button class="button button-quiet hidden" id="logout-button">Sign out</button></div>
+    </header>
+    <main id="app" aria-live="polite"><div class="loading"><span class="spinner"></span> Loading</div></main>
+    <footer class="site-footer"><span>Print Wallah</span><span>Made by DEVELOPERS</span></footer>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <dialog id="modal" class="modal"><div id="modal-content"></div></dialog>
+</body>
+</html>
