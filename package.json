@@ -8,10 +8,10 @@
     "start": "node src/server.js",
     "dev": "node --watch --watch-path=src src/server.js",
     "db:init": "node src/init-db.js",
-    "test": "node --test test/core.test.js",
+    "test": "node --test test/core.test.js test/photoedit.test.js",
     "smoke": "node test/smoke.js",
     "test:payments": "node test/payments.js",
-    "test:all": "node --test test/core.test.js && node test/smoke.js && node test/payments.js"
+    "test:all": "node --test test/core.test.js test/photoedit.test.js && node test/smoke.js && node test/payments.js"
   },
   "engines": {
     "node": ">=20"

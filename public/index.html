@@ -1,29 +1,55 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0d1210">
+  <meta name="theme-color" content="#0e0f13">
   <meta name="color-scheme" content="dark">
-  <meta name="description" content="Print Wallah: upload, configure and send your print order to a local print shop.">
+  <meta name="description" content="Print Wallah: upload, set up and pay for your print order at a local print shop.">
   <meta name="author" content="DEVELOPERS">
   <title>Print Wallah</title>
-  <link rel="icon" id="favicon" href="/assets/print-wallah_logo.png">
+  <link rel="icon" id="favicon" href="/assets/logo.png">
+  <link rel="preload" href="/vendor/fonts/plus-jakarta-sans-latin-wght-normal.woff2" as="font" type="font/woff2"
+    crossorigin>
   <link rel="stylesheet" href="/styles.css">
   <script src="/vendor/pdfjs/pdf.min.js" defer></script>
+  <script src="/icons.js" defer></script>
+  <script src="/photoedit.js" defer></script>
   <script src="/customer.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
+
 <body>
   <div class="site-shell">
-    <header class="topbar">
-      <a class="brand" href="/" aria-label="Print Wallah home"><img id="brand-logo" class="brand-logo" src="/assets/logo.png" alt="Print Wallah"></a>
-      <div class="topbar-right"><span id="top-context" class="context-label"></span><button class="button button-quiet hidden" id="logout-button">Sign out</button></div>
+    <header class="nav-wrap">
+      <nav class="nav" aria-label="Main">
+        <a class="brand" id="brand-link" href="/" aria-label="Print Wallah home"><img id="brand-logo" class="brand-logo"
+            src="/assets/logo.png" alt="Print Wallah"></a>
+        <div class="nav-actions"><span id="nav-context" class="nav-actions"></span><button
+            class="button button-quiet hidden" id="logout-button" type="button">Sign out</button></div>
+      </nav>
     </header>
-    <main id="app" aria-live="polite"><div class="loading"><span class="spinner"></span> Loading</div></main>
-    <footer class="site-footer"><span>Print Wallah</span><span>Made by DEVELOPERS</span></footer>
+    <main id="app" aria-live="polite">
+      <div class="loading"><span class="spinner"></span> Loading</div>
+    </main>
+    <footer class="site-footer" id="site-footer"><span>&copy; Print Wallah</span><span>Made by DEVELOPERS · <a
+          href="https://example.com/replace-official-site-url" target="_blank"
+          rel="noopener">thedevelopers.co.in</a></span>
+      <nav class="social-links" aria-label="DEVELOPERS social links"><a href="https://example.com/replace-instagram-url"
+          aria-label="Instagram" title="Instagram">IG</a><a href="https://example.com/replace-x-url"
+          aria-label="Twitter or X" title="Twitter or X">X</a><a href="https://example.com/replace-linkedin-url"
+          aria-label="LinkedIn" title="LinkedIn">in</a><a href="https://example.com/replace-whatsapp-url"
+          aria-label="WhatsApp" title="WhatsApp">WA</a><a href="https://example.com/replace-github-url"
+          aria-label="GitHub" title="GitHub">GH</a><a href="mailto:replace-email-address" aria-label="Email"
+          title="Email">@</a></nav>
+    </footer>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <dialog id="modal" class="modal"><div id="modal-content"></div></dialog>
+  <div id="nudge" class="nudge" role="alert" aria-live="assertive"></div>
+  <dialog id="modal" class="modal">
+    <div id="modal-content"></div>
+  </dialog>
 </body>
+
 </html>

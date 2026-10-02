@@ -29,8 +29,8 @@ Shop IDs are matched case-insensitively. Every endpoint is bound to the shop in 
   - The amount is always recomputed on the server. If `expectedAmount` differs, the response is `409 {code:"PRICE_CHANGED", currentAmount}`.
   - One upload token is one order. Repeating the request returns the existing order with `resumed:true` (200).
   - UPI orders start as `pending_payment` and include `order.upi = {id, payee, uri, qr}`. The server refuses UPI when the shop UPI ID is missing or invalid.
-  - Photo orders: `config.photoItems = [{uploadToken, quantity}]` (up to 12 photos, packed onto shared sheets).
-- `GET /orders/:orderCode`: full order view (used to resume checkout after a refresh). Includes the UPI link while a UPI payment is still unpaid.
+  - Photo orders: `config.photoItems = [{uploadToken, quantity, edit?}]` (up to 12 photos, packed onto shared sheets). The browser uploads *edited* photos as new JPEG uploads and passes those tokens; `edit` is only a record of the adjustments (sanitized and stored in `config.photoLayout[].edit`, never used for pricing or printing). Single pictures on glossy paper may send `config.imageEdit` the same way.
+- `GET /orders/:orderCode`: full order view (now includes `shopId`, `createdAt`, `updatedAt`, `completedAt`, which the portal uses to decide whether an order is still active) (used to resume checkout after a refresh). Includes the UPI link while a UPI payment is still unpaid.
 - `GET /orders/:orderCode/status`: `{order_status, payment_status, print_status, printer_online, ahead, ...}` for polling.
 - `POST /orders/:orderCode/payment-claim`: `{reference?}`. Customer says they paid. Moves `pending_payment` to `payment_review`. This does NOT verify anything.
 - `POST /orders/:orderCode/switch-cash`: UPI not yet claimed, becomes a cash order.
@@ -50,7 +50,7 @@ Shop IDs are matched case-insensitively. Every endpoint is bound to the shop in 
 - `POST /admin/orders/:orderId/print-failed`
 - `POST /admin/orders/:orderId/complete`
 - `GET /admin/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD`
-- `PATCH /admin/settings`
+- `PATCH /admin/settings` — operational shop fields: `name`, `ownerName`, `phone`, `email`, `address`, `city`, `upiId`, `upiName`, `pricing`, `printConfig`, and `agentName`. Shop Admin cannot change admin email or password.
 - `POST /admin/agent/rotate`
 - `GET /admin/uploads/:orderId` — private document download
 

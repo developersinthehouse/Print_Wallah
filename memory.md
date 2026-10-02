@@ -1,21 +1,22 @@
 # Print Wallah project memory
 
-Read this first. It describes the verified current state (last updated 2026-10-01, v2 payment/UI release). When code and this file disagree, the code is right: fix this file.
+Read this first. It describes the verified current state (last updated 2026-10-01, v3 customer portal UX / redesign release). When code and this file disagree, the code is right: fix this file.
 
 ## Current State
 
 Print Wallah is a multi-tenant printing-shop platform by **DEVELOPERS** with three surfaces: Super Admin (`/`), Shop Admin (`/admin`), Customer portal (`/shop/:shopId`, reached by each shop's QR). One Express service serves API and static frontend, so there is no separate frontend port, API URL or CORS setup.
 
-Working end to end and tested (see Testing): customer upload, settings, real preview, server pricing, **Pay with UPI** and cash, shop verification, print queue, Python agent, status tracking, Super Admin/Shop Admin screens, dark UI.
+Working end to end and tested (see Testing): customer upload, settings, real preview, **photo editing that is baked into the print file**, server pricing, **Pay with UPI** and cash, shop verification, print queue, Python agent, status tracking, Super Admin/Shop Admin screens, redesigned dark UI.
 
 ## Architecture
 
 - Backend: Node 20+, Express, PostgreSQL (`pg`). `src/server.js` (boot, helmet, rate limits, LAN banner), `src/routes/api.js` (all routes, order/payment state machine, photo-sheet PDF), `src/services/{core,upi,webhook,network,audit}.js`, `src/middleware/auth.js`.
-- Frontend (no framework): `public/index.html`, `styles.css` (dark design system), `app.js` (shared helpers, router, login, Super Admin, Shop Admin), `customer.js` (customer portal, preview, UPI/cash checkout, tracking). `public/vendor/pdfjs/` is pdf.js 3.11.174 (Apache-2.0) used for the real PDF preview, served locally because the CSP allows only `'self'`.
+- Frontend (no framework), script order matters (`defer`, in this order): `vendor/pdfjs/pdf.min.js`, `icons.js` (doodle SVG icons, global `icon(name,size)`), `photoedit.js` (global `PhotoEdit`, pure pixel pipeline, also unit tested under Node), `customer.js` (portal; defines `renderCustomer`), `app.js` (shared helpers `api/esc/money/toast/jsonBody/setHeading/setBrandHome`, router `start()`, login, Super Admin, Shop Admin). `styles.css` is the design system. `vendor/fonts/` has Plus Jakarta Sans (OFL), served locally because CSP is `'self'` only. `public/vendor/pdfjs/` is pdf.js 3.11.174 (Apache-2.0) used for the real PDF preview, served locally because the CSP allows only `'self'`.
 - Print agent: `agent/print_agent.py` (stdlib Python) polls the API, runs a configured OS print command without a shell, keeps a local journal so a job id never prints twice, sends a heartbeat every 20 s even during a long print.
 - Auth: JWT (issuer `print-wallah`) in an HTTP-only SameSite=Lax cookie. Shop sessions carry a stamp (`pv`) of the admin email+password hash, so changing either logs old sessions out.
 - Logo: `<img id="brand-logo" src="/assets/logo.png">`. If `public/assets/logo.png` does not exist the server answers that URL with `assets/logo-placeholder.svg`. **Drop the real logo in as `public/assets/logo.png`** (see `public/assets/README.md`). No CSS or text logo exists anywhere. Favicon currently points at the placeholder.
-- Design: dark surfaces (`#0c110f`/`#131a17`), brand `#125948` (buttons, selected state), `#0E4A38` (hover), `#5fd0ac` for focus/links. No fake data, glow, live dots or decorative effects. Empty states are real.
+- Design system (v3): neutral ink-dark (`#0e0f13` page, `#171920` cards, no green tint). Brand `#125948` (primary buttons, selected segments), `#0E4A38` (hover) and mint `#58d6aa` only for focus/links/eyebrows. **Cards have no outlines**: they separate by surface contrast, spacing and a soft shadow; inputs keep a visible 1.5px edge on purpose. Spacing tokens `--s-1..--s-8` and layout primitives `.stack/.stack-sm/.stack-lg/.cluster/.mt-*` replace one-off margins. Doodle icons (`icons.js`) are hand-drawn style SVG using `--doodle-a` (indigo blob) and `--doodle-b` (amber detail). No fake data, glow, live dots or decorative effects. Empty states are real and use a doodle.
+- Navigation: floating bar (`.nav`), logo left, contextual chips right (`#nav-context`, set with `setHeading(label, chipsHtml)`), Sign out. `setBrandHome(href)`: customer `/shop/<id>`, Shop Admin `/admin`, Super Admin `/`. The global footer is hidden on customer pages (they have their own `.pw-footer`).
 
 ## Database schema overview
 
@@ -65,11 +66,27 @@ Shop public IDs (new shops): 10 characters from `ABCDEFGHJKLMNPQRSTUVWXYZ2345678
 
 ## Customer portal
 
-Upload (PDF/JPG/PNG, XHR progress, size/type/corruption checks; images over 12000 px rejected) -> settings (copies, page range with live validation, colour, sides, paper size/type, orientation, scaling fit/fill/actual) -> preview -> server quote (`/price` with the upload token, identical code path to the order) -> UPI or cash -> tracking screen with polling, queue position, printer-offline notice. Order code is kept in `localStorage` and `?order=` so a refresh or return from a UPI app resumes the same order.
+Routes: `/shop/<id>` is always the **homepage** (upload workflow). `/shop/<id>?order=<code>` is the order status screen. The logo is a plain link to `/shop/<id>`, so it always lands on the correct shop's homepage.
 
-- Preview: real PDF page rendered with pdf.js onto a sheet with the chosen paper size, orientation, printable-area margin (4 mm dashed), scaling mode, B&W filter, copies stack, duplex front/back caption, page navigation over the selected range, honest warnings (actual size cut off, fill crops, landscape on a portrait page). Labelled approximate.
-- Photo mode (images, glossy): up to 12 different photos with quantity each, packed in sequence onto shared sheets. Sizes: passport 3.5x4.5, stamp 2x2.5, 2x2 in, wallet 5x7.5, 4x6, 5x7. Grid is rotated 90 degrees when that fits more (passport on A4 = 28 per sheet). Crop-to-fill or whole-photo. Preview grid uses the same maths as the server (`photoGeometry`). The generated sheet PDF has hairline cut guides.
-- Documents are one file per order. There is no multi-document cart.
+Homepage shows the whole workflow before any upload: file card, settings (pages, copies, colour, paper size/type, sides, orientation, scaling, photo options), preview (blank sheet with a doodle) and the pay card with an explanatory empty price. Until a file exists, the settings and pay areas are covered by a `.lock-cover`; tapping or focusing a control shows the in-product **nudge** (`#nudge`, "Upload a document first to use this option." with a "Choose file" action and a pulse on the upload card). It never uses `alert()`. Only the "Document or picture / Photo sheet" toggle works pre-upload because it decides what the upload step asks for.
+
+Upload (PDF/JPG/PNG, XHR progress, size/type/corruption checks; images over 12000 px rejected) -> settings -> preview -> server quote (`/price` with the upload token, same code path as the order) -> UPI or cash -> status screen with polling, queue position, printer-offline notice.
+
+**Order state rules** (fixes the "completed screen stuck after refresh" bug):
+- The order code lives in `localStorage` (`pw-order-<shopId>`) and, while viewing, in `?order=`.
+- *Active* order = not terminal and created in the last 24 h (`isActiveOrder`; the API now returns `createdAt/updatedAt/completedAt`). Terminal = completed, cancelled, payment rejected/failed/cancelled.
+- Loading `/shop/<id>` without `?order=`: an active stored order shows as a **"You have an order in progress" banner** on the homepage (with View order); a terminal or stale one is removed from storage and nothing is shown.
+- Loading with `?order=`: active -> status screen; terminal/stale -> homepage with a one time note, storage and URL cleaned.
+- Reaching `completed` while on the status screen shows "Printed and ready", clears storage immediately, and returns to the homepage after 12 s (visible countdown, "Stay on this page", and a **Back to home** button). All other status screens also have Back to home. Back to home / logo / auto return go through `goHome()` which clears the URL and re-runs `renderCustomer(shopId)`, so the shop context is always the same shop.
+- Customer cancel / switch-to-cash / claim paid are unchanged (see UPI section).
+
+Footer (`footerHtml()`): Print Wallah logo and one line, shop name/address/phone (tel link) and an Open in Maps link built from the real address, quick links (Start a print, Print settings, Track my order only when an active order exists, Shop staff sign in -> `/admin`), "Made by DEVELOPERS". Nothing is invented: rows are omitted when the shop has no phone/address.
+
+Preview: real PDF page rendered with pdf.js onto a sheet with the chosen paper size, orientation, 4 mm printable-area margin, scaling, B&W filter, copies stack, duplex caption, page navigation, honest warnings. Labelled approximate.
+
+**Photo mode and editing** (images only; glossy). Up to 12 photos with quantity each packed onto shared sheets (sizes passport, stamp, 2x2 in, wallet, 4x6, 5x7; grid rotates 90 degrees when that fits more; photo cells use the same maths as the server `photoGeometry`). The **Photo editing** card appears only when an image is uploaded and (mode is Photo sheet **or** paper type is glossy). Controls: rotate left/right, black and white, brightness, contrast, saturation, exposure, highlights, shadows, sharpness, reset, apply to all photos, per-photo selection; in photo mode also fit (fill/crop vs whole photo), zoom 1-4x and drag-to-pan in the edit frame. Crop/zoom/pan apply only to photo sheets; in single-picture glossy mode edits are tone + rotation (scaling still comes from Fit/Fill/Actual).
+
+**Edited-image print pipeline.** `photoedit.js` is the single source of truth. `PhotoEdit.render(img, edit, {aspect, fit, maxSide})` computes the crop, draws it and applies the tone/sharpen maths on pixels (no `ctx.filter`, which iOS Safari lacks). The preview (sheet cells, single picture preview, editor frame) uses it at small sizes. On "Pay", `bakeEdited()` renders each *edited* photo at print resolution (photo size at 300 dpi, max 4000 px), encodes JPEG q0.93, uploads it through the normal `/uploads` endpoint, and the order is created with the **baked upload tokens** (`photoItems[].uploadToken`, or `uploadToken` for a single picture). So the server's photo-sheet PDF / stored document is built from the edited pixels; there is no separate "edited preview vs original print". Baked uploads are cached by edit key so a retry reuses the same token (order creation stays idempotent). Unedited photos are sent as the original upload. The server only records a sanitized summary of the edits (`config.photoLayout[].edit`, `config.imageEdit`, via `summarizeEdit`) so the shop can see a file was edited; it never uses those numbers for pricing or printing. Original uploads that were replaced by baked ones expire and are cleaned like any unclaimed upload.
 
 ## Pricing
 
@@ -77,11 +94,13 @@ Upload (PDF/JPG/PNG, XHR progress, size/type/corruption checks; images over 1200
 
 ## Shop Admin
 
-Overview (needs-attention counts include UPI awaiting customer), order desk (search/filter, 15 s auto refresh that keeps filters and does not run while typing or when a dialog is open), actions: Confirm cash, Payment received / Not received, Cancel, Mark complete / failed, Retry print, download file (photo orders download the generated sheet). Print errors from the agent are shown on the order. 401 anywhere returns to the login screen.
+Overview (needs-attention counts include UPI awaiting customer), order desk (search/filter, change-aware 5 s polling that updates order regions without redrawing the tab; pauses while hidden, editing controls, or a dialog is open), actions: Confirm cash, Payment received / Not received, Cancel, Mark complete / failed, Retry print, download file (photo orders download the generated sheet PDF). Print errors from the agent are shown on the order. Shop Settings manages operational identity, contact, UPI, rates, print options, and agent name; admin credentials remain Super Admin-controlled. 401 anywhere returns to the login screen. Nav shows a static "Shop Admin" role label and a **Customer portal** storefront link; the logo goes to `/admin`.
 
 ## Super Admin
 
-Create/edit shops (UPI validated, optional A3 prices), QR (uses the browser's address in development), lock/unlock, extend, details. Duplicate shop admin email returns 409. Super login failures are logged server side with the reason (not configured / wrong email / wrong password).
+Create/edit shops (UPI validated, optional A3 prices), QR (uses the browser's address in development), lock/unlock, extend, details. Duplicate shop admin email returns 409. Super login failures are logged server side with the reason.
+
+**Shop list actions are separate by construction**: "Open portal" is a real `<a href="/shop/<id>" target="_blank">` (`data-portal-link`); Details/Extend/Lock are `<button data-action=...>`. The earlier bug was that the portal cell was a button with `data-action="view"` and `wireShopRows` mapped `view` and `details` to the same `showShopDetails()`; the row wiring now only binds `button[data-action]` and `view` no longer exists. Login screens link to each other with real URLs (`/` Super Admin, `/admin` Shop Admin).
 
 ## Environment / Setup
 
@@ -95,7 +114,9 @@ API reference: `docs/API.md`. Payments: `docs/PAYMENTS.md`. Agent: `docs/PRINT_A
 
 ## Testing
 
-`npm test` (11 unit tests), `npm run smoke`, `npm run test:payments` (need a running server and the same `.env`; payments test needs `PAYMENT_WEBHOOK_SECRET` set for both), Python `agent/test_agent.py` (3 tests). `npm run test:all` runs the JS suites. On 2026-10-01 all passed against PostgreSQL 16. A real headless Chromium run (phone 360/390 px over the LAN address, tablet, desktop) covered: Super Admin login (bad then good), shop creation via the modal, customer PDF upload with painted preview, range validation, UPI link contents, refresh/resume, shop admin login, claim, verify, customer auto-update, two-photo sheet, cash path, bad shop URL, no horizontal overflow, zero console/page/network errors. The real Python agent was run against the server with a stand-in print command (claim, print command arguments, completed). Not tested: a physical printer, a real UPI app or phone, a payment provider, iOS Safari, Render deployment.
+`npm test` (18 unit tests incl. the photo pixel pipeline), `npm run smoke`, `npm run test:payments` (need a running server and the same `.env`; payments test needs `PAYMENT_WEBHOOK_SECRET` set for both), Python `agent/test_agent.py` (3 tests). `npm run test:all` runs the JS suites. All passed on 2026-10-01 against PostgreSQL 16.
+
+Browser tests (headless Chromium via `@sparticuz/chromium` + `puppeteer-core`, run from a scratch folder, **not shipped in the repo**) covered, on 2026-10-01 over the LAN address with phone (360/390), tablet, laptop (1280) and wide (1920) viewports: shop-list Customer Portal link opens `/shop/<id>` while Details opens the modal; homepage shows the whole workflow before upload; locked controls show the nudge; logo goes to the shop homepage and an active order appears as a banner; cash order -> shop confirm -> real agent API claim/complete -> "Printed and ready" -> auto return -> refresh, stale storage and old `?order=` link never bring the screen back; photo edit changes the preview and the **JPEG embedded in the real print sheet PDF matches the pipeline output** (mean 229.4 vs expected 229.5, cropped to the photo aspect); glossy single picture rotation reaches the stored file (400x600); layout sweep (no overflow, overlaps, touching or sub-36px targets); footer and nav link targets; zero console, page or network errors. Earlier UPI browser flow (link contents, refresh resume, claim, admin verify, auto update) also re-passed on the new UI. Not tested: a physical printer, a real UPI app or phone, iOS Safari, a payment provider, Render deployment.
 
 ## Completed
 
@@ -108,6 +129,7 @@ All of the above, plus the fixes listed in the Change Log.
 3. Automatic UPI verification needs a provider account plus an adapter to the webhook contract.
 4. Production deployment (Render, persistent disk, https `APP_URL`), document retention policy, object storage.
 5. Multi-document orders, staff accounts per shop, refunds workflow.
+6. The real logo (`public/assets/logo.png`) and a favicon; the placeholder text SVG is rendered in a fallback font.
 
 ## Known Issues / Limitations
 
@@ -116,6 +138,8 @@ All of the above, plus the fixes listed in the Change Log.
 - Preview is approximate: it cannot know a printer driver's real margins or colour handling.
 - `storage/` and `.test-postgres/` in the project folder contain leftovers from earlier testing; they are not used by the code and can be deleted. `storage/` must not be committed or deployed with test files.
 - `pdf-parse` prints "Warning: Indexing all PDF objects" for some PDFs; harmless.
+- Photo edits run in the customer's browser; very large photos on low-memory phones are downscaled to at most 4000 px on the long side (about 340 dpi for a 4x6) and the JPEG is re-encoded once at quality 0.93. Sharpness uses a box-blur unsharp mask scaled to image size, so it is consistent between preview and print but is not a professional sharpening algorithm.
+- Edits (zoom, pan) are per photo and are lost on reload; they are applied only when the order is placed.
 - Agent `print_command` placeholders must cover every option a shop enables (the agent refuses a job rather than silently ignoring an option).
 
 ## Important Decisions
@@ -128,11 +152,12 @@ All of the above, plus the fixes listed in the Change Log.
 
 ## Change Log
 
-- 2026-10-01 v2:
-  - Root causes of earlier reports: `GET /api/super/shops/:id` 500 was SQL (reserved-word aliases in the stats query, already fixed in the previous session and covered by smoke); Super Admin 401 comes from credentials not matching `.env` as loaded at server start (now logged with the reason). Both flows pass tests.
-  - Added full UPI flow, order states, idempotency, price-changed guard, resume, switch-to-cash, cancel, webhook integration point, `payment_events`, `order_uploads`, `orders.payment_claimed_at`.
-  - Print safety: cancel deletes queued job, agent claim guard, retry issues new job id, lease expiry fails after 5 attempts, complete only from printing, agent heartbeat during printing.
-  - Server: binds `0.0.0.0`, LAN banner, dynamic QR base URL, dev-safe helmet, rate limits sized for polling, startup config validation.
-  - Admin: session stamp, 409 on duplicate admin email, UPI validation, optional A3 prices, auto-refresh, UPI-aware order actions.
-  - UI: dark redesign, logo image slot (no PW mark), customer portal rewrite (real preview, multi-photo sheets, rotation-aware layouts), mobile-first layout.
-  - Corrected this file: public shop ID length, branding assets, storage leftovers.
+- 2026-10-01 v3 (customer portal UX, redesign, navigation, state):
+  - Redesign: neutral ink-dark system, borderless cards, Plus Jakarta Sans, spacing tokens, doodle icon set, floating navbar, premium customer footer.
+  - Routing: fixed shop-list Customer Portal link (was a button sharing the Details handler); logo, Back to home and login switches use real URLs.
+  - Customer homepage shows the full workflow pre-upload with in-product "upload first" nudges.
+  - Photo editing with an edited-image print pipeline (`photoedit.js`, bake on submit, server stores a sanitized edit summary).
+  - Order state fix: active vs terminal vs stale orders, homepage banner for an active order, completion auto return + Back to home, no resurrection after refresh. API order view gained `createdAt/updatedAt/completedAt`.
+  - Found while testing and fixed: photo mode did not switch paper to glossy when several photos were chosen; stepper buttons shrank on tablets; nav chip overflowed 390px; duplicate order code on status screens.
+- 2026-10-01 v2: UPI flow, order states, idempotency, webhook integration point, LAN server, print-safety fixes, first dark UI (look superseded by v3).
+- Earlier history: see v2 notes in `docs/` and git history; corrected facts (shop ID length, branding assets, storage leftovers) were fixed in v2.
