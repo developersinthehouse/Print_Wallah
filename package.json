@@ -8,10 +8,10 @@
     "start": "node src/server.js",
     "dev": "node --watch --watch-path=src src/server.js",
     "db:init": "node src/init-db.js",
-    "test": "node --test test/core.test.js test/photoedit.test.js",
+    "test": "node --test test/core.test.js test/photoedit.test.js test/agentLease.test.js test/retention.test.js test/documentBundle.test.js test/reports.test.js test/storagePolicy.test.js",
     "smoke": "node test/smoke.js",
     "test:payments": "node test/payments.js",
-    "test:all": "node --test test/core.test.js test/photoedit.test.js && node test/smoke.js && node test/payments.js"
+    "test:all": "npm test && node test/smoke.js && node test/payments.js"
   },
   "engines": {
     "node": ">=20"
@@ -25,6 +25,7 @@
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
+    "pdf-lib": "^1.17.1",
     "pdf-parse": "^1.1.1",
     "pdfkit": "^0.20.2",
     "pg": "^8.13.1",

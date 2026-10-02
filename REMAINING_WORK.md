@@ -4,7 +4,7 @@ This document lists the work still needed to take Print Wallah from the current 
 
 ## Current state
 
-The core multi-shop application is implemented: shop setup, customer ordering, private uploads, per-shop pricing, manual cash/UPI review, order administration, print queue, and the optional local print agent. The application has passed the recorded API smoke checks, unit checks, and browser checks described in [MEMORY.md](MEMORY.md).
+The core multi-shop application is implemented: shop setup, customer ordering, private uploads, per-shop pricing, manual cash/UPI review, order administration, print queue, document bundles, daily/monthly reports, and the optional local print agent. Unit suites pass; the new bundle/report/retention paths still need database-backed smoke verification on a disposable database.
 
 The project is **not yet production-ready for real payments or unattended printing**. No live payment provider is connected, no physical printer has been validated, and production database/storage/backup settings have not been configured. No deployed production instance has been verified.
 
@@ -14,9 +14,9 @@ Finish these before accepting real customer orders:
 
 - [ ] Configure a production PostgreSQL database, HTTPS service, private persistent upload storage, and backups.
 - [ ] Configure a real shop with verified rates, UPI details, enabled print options, admin credentials, and a tested printer/agent.
-- [ ] Decide whether to retain manual UPI review or integrate a payment gateway. If gateway automation is wanted, complete section 4 before accepting online payments as automatically paid.
+- [x] Launch payment mode selected: manual UPI review. Do not describe a customer UPI-app return as automatic payment verification.
 - [ ] Run the release checks in section 8 against the actual deployment and shop printer.
-- [ ] Choose and implement a document-retention policy in section 6.
+- [x] Live print-file retention selected and implemented: delete source/generated files about 10 minutes after a successful print; retain order/payment/audit records.
 
 ## 1. Local owner setup
 
@@ -105,7 +105,7 @@ Do not treat returning from a UPI app, a customer-entered reference, or a browse
 
 ## 5. Printer support and diagnostics
 
-**Status:** A local agent can lease jobs, download files, invoke a configured OS command, and report the result. Physical printer status/capabilities are not detected.
+**Status:** The agent validates its server URL and print executable, renews claimed-job leases during long prints, maps paper type, and keeps a local duplicate journal. Glossy auto-print is disabled by default. Physical printer status/capabilities are not detected; this PC has no resolvable SumatraPDF/print executable and no physical printer has been tested.
 
 1. Test the current agent with each intended printer model and operating system using the shop's actual print command and driver.
 2. Verify the command maps the order's copies, color mode, paper size/type, orientation, page range, scaling, and duplex settings. If the configured OS command cannot honor an option, either add an appropriate adapter or disable that option for the shop.
@@ -117,17 +117,17 @@ Do not treat returning from a UPI app, a customer-entered reference, or a browse
 
 ## 6. Customer-file retention and storage growth
 
-**Status:** Uploads that expire before becoming orders are cleaned hourly. Documents associated with orders are retained indefinitely. A hosted object-storage adapter and configurable retention feature are not implemented.
+**Status:** Unclaimed uploads expire and are cleaned hourly. Source uploads and generated print PDFs for completed orders are removed by a one-minute cleanup worker once they are at least 10 minutes past completion; order/payment/audit metadata remains. Failed orders retain files for retry. The owner selected no customer-file backups. Backup plans must exclude customer bytes; a hosted object-storage adapter and configurable retention duration are not implemented.
 
-1. Decide how long original customer uploads and generated photo-sheet PDFs must be available for reprints, disputes, accounting, and customer requests. Decide separately whether order metadata/audit history has a different retention period.
-2. Have the business owner confirm the policy and tell customers what happens to their files. Confirm applicable local privacy and recordkeeping requirements with the business's adviser.
-3. Implement the selected retention duration in configuration or shop/platform settings. Add a scheduled cleanup process that removes expired original uploads and generated print PDFs from private storage and updates/retains database records safely.
+1. Policy selected: delete source and generated print files about 10 minutes after the order completes. Order/payment/audit metadata remains. Failed jobs retain files for retry.
+2. Customers see this deletion window before upload. Confirm the operator knows that a completed order can no longer be reprinted after file cleanup.
+3. Current live-storage policy is fixed at 10 minutes after successful completion. The cleanup marks `files_deleted_at`, removes source and generated print files, and keeps order metadata. Make the duration configurable only if the owner later changes this policy.
 4. Make cleanup idempotent and safe if a file is already missing. Log cleanup counts/errors without logging file contents, credentials, or unnecessary personal data.
 5. Add tests for retention boundaries, missing files, failed deletion/retry, orders with generated photo PDFs, and ensuring active/recent orders are not removed early.
 6. Decide whether a single persistent disk is sufficient for expected traffic. If scaling to multiple instances or needing object storage, implement a storage interface and a private object-storage adapter with access controls, lifecycle rules, and migration of existing files.
-7. Verify storage and database backups use encryption/access control and match the retention policy. Test deletion from backups according to the business's approved backup-expiry schedule.
+7. Owner selected no customer-file backups. Configure database backups without uploaded/generated document bytes; verify any Render disk snapshots are disabled or do not retain customer files beyond the stated deletion policy. Test restoring database metadata without files.
 
-**Complete when:** policy is approved, automated cleanup follows it, tests cover file and record behavior, and the deployed storage capacity/backup process is documented.
+**Complete when:** the deployed 10-minute cleanup runs reliably, retention tests pass, backup snapshots cannot restore deleted customer files, and storage capacity is documented.
 
 ## 7. Product work still to decide or build
 
@@ -142,8 +142,11 @@ These are not prerequisites for every launch, but the owner must decide whether 
 
 ### Multiple shop staff
 
-1. Current shop data stores one admin account per shop. Decide whether staff accounts, roles, or separate cashier/print-operator permissions are needed.
-2. If needed, replace the single shop admin credential with shop-scoped users and roles. Add invitation/password-reset flows, revocation, audit attribution, and tenant-isolation tests.
+The owner chose to keep one shared shop-admin account for launch. Separate cashier/print-operator accounts are deferred and are not a launch blocker.
+
+### Multi-document orders
+
+Implemented: up to 10 PDFs/JPG/PNGs can be combined into one order with shared settings, full pages, one combined server-calculated price/payment, and a generated print-ready PDF. The database-backed smoke test covers mixed files, pages, copies and agent download; run it against a disposable database before release.
 
 ### Photo order behavior
 
@@ -152,10 +155,9 @@ These are not prerequisites for every launch, but the owner must decide whether 
 
 ### Reporting
 
-1. Shop Admin has date-filtered daily analytics. Super Admin has platform totals and shop analytics snapshots. Decide which platform-level date filters, exports, payment breakdowns, or per-shop comparisons are needed.
-2. Define report columns and date/time-zone rules. Implement only the approved reports and ensure every tenant-level report is correctly scoped.
+Implemented: daily/monthly Asia/Kolkata shop reports and date-range per-shop Super Admin comparison include orders, pages, verified cash/UPI revenue, pending payments and print failures, with CSV export. Unit tests cover date ranges and report query shape; database-backed permission/aggregation smoke verification remains.
 
-**Complete when:** the owner has marked each item as required or not required for the intended launch; required items are implemented and covered by tests.
+Refund workflow and separate staff accounts are not selected for launch. Customer order recovery, additional photo-sheet layouts and reports beyond the selected daily/monthly comparison remain optional decisions.
 
 ## 8. Release verification
 

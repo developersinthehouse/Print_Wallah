@@ -1,6 +1,6 @@
 # Print Wallah project memory
 
-Read this first. It describes the verified current state (last updated 2026-10-01, v3 customer portal UX / redesign release). When code and this file disagree, the code is right: fix this file.
+Read this first. It describes the verified current state (last updated 2026-10-02, v3 customer portal UX / redesign release). When code and this file disagree, the code is right: fix this file.
 
 ## Current State
 
@@ -12,9 +12,9 @@ Working end to end and tested (see Testing): customer upload, settings, real pre
 
 - Backend: Node 20+, Express, PostgreSQL (`pg`). `src/server.js` (boot, helmet, rate limits, LAN banner), `src/routes/api.js` (all routes, order/payment state machine, photo-sheet PDF), `src/services/{core,upi,webhook,network,audit}.js`, `src/middleware/auth.js`.
 - Frontend (no framework), script order matters (`defer`, in this order): `vendor/pdfjs/pdf.min.js`, `icons.js` (doodle SVG icons, global `icon(name,size)`), `photoedit.js` (global `PhotoEdit`, pure pixel pipeline, also unit tested under Node), `customer.js` (portal; defines `renderCustomer`), `app.js` (shared helpers `api/esc/money/toast/jsonBody/setHeading/setBrandHome`, router `start()`, login, Super Admin, Shop Admin). `styles.css` is the design system. `vendor/fonts/` has Plus Jakarta Sans (OFL), served locally because CSP is `'self'` only. `public/vendor/pdfjs/` is pdf.js 3.11.174 (Apache-2.0) used for the real PDF preview, served locally because the CSP allows only `'self'`.
-- Print agent: `agent/print_agent.py` (stdlib Python) polls the API, runs a configured OS print command without a shell, keeps a local journal so a job id never prints twice, sends a heartbeat every 20 s even during a long print.
+- Print agent: `agent/print_agent.py` (stdlib Python) polls the API, runs a configured OS print command without a shell, keeps a local journal so a job id never prints twice, reports shop heartbeat, and renews the claimed job lease every 20 s during long prints. Startup validates the HTTP(S) server URL and configured print executable; non-default paper types require `{paper_type}` in the command.
 - Auth: JWT (issuer `print-wallah`) in an HTTP-only SameSite=Lax cookie. Shop sessions carry a stamp (`pv`) of the admin email+password hash, so changing either logs old sessions out.
-- Logo: `<img id="brand-logo" src="/assets/logo.png">`. If `public/assets/logo.png` does not exist the server answers that URL with `assets/logo-placeholder.svg`. **Drop the real logo in as `public/assets/logo.png`** (see `public/assets/README.md`). No CSS or text logo exists anywhere. Favicon currently points at the placeholder.
+- Logo: `<img id="brand-logo" src="/assets/logo.png">`. The route prefers an optional `public/assets/logo.png` override, falls back to the checked-in transparent `public/assets/print-wallah_logo.png`, then to `logo-placeholder.svg`. The favicon uses the same route.
 - Design system (v3): neutral ink-dark (`#0e0f13` page, `#171920` cards, no green tint). Brand `#125948` (primary buttons, selected segments), `#0E4A38` (hover) and mint `#58d6aa` only for focus/links/eyebrows. **Cards have no outlines**: they separate by surface contrast, spacing and a soft shadow; inputs keep a visible 1.5px edge on purpose. Spacing tokens `--s-1..--s-8` and layout primitives `.stack/.stack-sm/.stack-lg/.cluster/.mt-*` replace one-off margins. Doodle icons (`icons.js`) are hand-drawn style SVG using `--doodle-a` (indigo blob) and `--doodle-b` (amber detail). No fake data, glow, live dots or decorative effects. Empty states are real and use a doodle.
 - Navigation: floating bar (`.nav`), logo left, contextual chips right (`#nav-context`, set with `setHeading(label, chipsHtml)`), Sign out. `setBrandHome(href)`: customer `/shop/<id>`, Shop Admin `/admin`, Super Admin `/`. The global footer is hidden on customer pages (they have their own `.pw-footer`).
 
@@ -90,15 +90,15 @@ Preview: real PDF page rendered with pdf.js onto a sheet with the chosen paper s
 
 ## Pricing
 
-`pricing` JSONB per shop: `bw_a4,color_a4,bw_a3,color_a3,glossy_a4,photo_sheet` plus optional `glossy_a3` and `photo_sheet_a3`. When an optional key is unset, glossy A3 uses the A3 colour/B&W rate and A3 photo sheets use `photo_sheet` (legacy behaviour). Duplex halves sheets per copy. All money is computed on the server; zero totals are refused. Page ranges are parsed strictly (`all`, `3`, `1-3,5`).
+Latest safe verification on 2026-10-02: `npm test` passed 27/27, Python agent tests passed 7/7, `npm audit --omit=dev` last reported zero vulnerabilities, and syntax/editor checks passed. The gitignored local `agent/config.json` exists, but its configured print executable does not resolve on this Windows PC, so the agent will refuse to start; the SQLite journal has not been initialized. Database-backed smoke/payment and bundle integration scripts were not run because `.env` points to a hosted database; run them only against a disposable test database. Browser/physical-printer/real-UPI/Render deployment checks last recorded on 2026-10-01 remain distinct from these unit tests.
 
 ## Shop Admin
 
-Overview (needs-attention counts include UPI awaiting customer), order desk (search/filter, change-aware 5 s polling that updates order regions without redrawing the tab; pauses while hidden, editing controls, or a dialog is open), actions: Confirm cash, Payment received / Not received, Cancel, Mark complete / failed, Retry print, download file (photo orders download the generated sheet PDF). Print errors from the agent are shown on the order. Shop Settings manages operational identity, contact, UPI, rates, print options, and agent name; admin credentials remain Super Admin-controlled. 401 anywhere returns to the login screen. Nav shows a static "Shop Admin" role label and a **Customer portal** storefront link; the logo goes to `/admin`.
-
-## Super Admin
-
-Create/edit shops (UPI validated, optional A3 prices), QR (uses the browser's address in development), lock/unlock, extend, details. Duplicate shop admin email returns 409. Super login failures are logged server side with the reason.
+1. Render has a service and PostgreSQL but no persistent upload disk yet. Configure/mount private persistent storage, HTTPS `APP_URL`, DB backups and a restore rehearsal before real orders.
+2. A live Windows print executable/model is not configured on this PC. Install and test SumatraPDF plus each shop's actual driver; supported devices/options vary. The agent renews leases and rejects glossy auto-print by default.
+3. Manual UPI review is the selected launch mode; automatic gateway verification remains optional future work.
+4. Print files are removed from live storage about 10 minutes after successful print; order/payment/audit records remain. The owner selected no customer-file backups, so ensure disk snapshots/backups do not retain customer bytes beyond this promise.
+5. Multi-document PDF/JPG/PNG bundles, Asia/Kolkata daily/monthly reports, CSV export and platform shop comparison are implemented, but DB-backed bundle/report smoke tests have not yet run on a disposable database. Separate staff accounts are not required for launch; refunds remain manual/not in scope.
 
 **Shop list actions are separate by construction**: "Open portal" is a real `<a href="/shop/<id>" target="_blank">` (`data-portal-link`); Details/Extend/Lock are `<button data-action=...>`. The earlier bug was that the portal cell was a button with `data-action="view"` and `wireShopRows` mapped `view` and `details` to the same `showShopDetails()`; the row wiring now only binds `button[data-action]` and `view` no longer exists. Login screens link to each other with real URLs (`/` Super Admin, `/admin` Shop Admin).
 
@@ -110,11 +110,11 @@ Development on a phone: `npm run dev` (or `npm start`) prints `Local:` and `Netw
 
 ## Integration Contracts
 
-API reference: `docs/API.md`. Payments: `docs/PAYMENTS.md`. Agent: `docs/PRINT_AGENT.md`, endpoints `POST /api/agent/:shop/heartbeat`, `GET .../jobs` (claims one job, returns `{job:null}` when none or when the shop is locked), `GET .../jobs/:id/document`, `POST .../jobs/:id/result {status,error?}`; Bearer agent token, scoped to its shop.
+API reference: `docs/API.md`. Payments: `docs/PAYMENTS.md`. Agent: `docs/PRINT_AGENT.md`, endpoints `POST /api/agent/:shop/heartbeat`, `GET .../jobs` (claims one job, returns `{job:null}` when none or when the shop is locked), `POST .../jobs/:id/heartbeat` (renews an active lease), `GET .../jobs/:id/document`, `POST .../jobs/:id/result {status,error?}`; Bearer agent token, scoped to its shop.
 
 ## Testing
 
-`npm test` (18 unit tests incl. the photo pixel pipeline), `npm run smoke`, `npm run test:payments` (need a running server and the same `.env`; payments test needs `PAYMENT_WEBHOOK_SECRET` set for both), Python `agent/test_agent.py` (3 tests). `npm run test:all` runs the JS suites. All passed on 2026-10-01 against PostgreSQL 16.
+Latest safe verification on 2026-10-02: `npm test` passed 22/22, Python agent tests passed 6/6, `npm audit --omit=dev` reported zero vulnerabilities, and syntax/editor checks passed. The gitignored local `agent/config.json` exists, but its configured print executable does not resolve on this Windows PC, so the agent will refuse to start; its SQLite journal has not been initialized. Database-backed smoke/payment scripts were not run because `.env` points to a hosted database; only run those against a disposable test database. Browser/physical-printer/real-UPI/Render deployment checks last recorded on 2026-10-01 remain distinct from this safe test run.
 
 Browser tests (headless Chromium via `@sparticuz/chromium` + `puppeteer-core`, run from a scratch folder, **not shipped in the repo**) covered, on 2026-10-01 over the LAN address with phone (360/390), tablet, laptop (1280) and wide (1920) viewports: shop-list Customer Portal link opens `/shop/<id>` while Details opens the modal; homepage shows the whole workflow before upload; locked controls show the nudge; logo goes to the shop homepage and an active order appears as a banner; cash order -> shop confirm -> real agent API claim/complete -> "Printed and ready" -> auto return -> refresh, stale storage and old `?order=` link never bring the screen back; photo edit changes the preview and the **JPEG embedded in the real print sheet PDF matches the pipeline output** (mean 229.4 vs expected 229.5, cropped to the photo aspect); glossy single picture rotation reaches the stored file (400x600); layout sweep (no overflow, overlaps, touching or sub-36px targets); footer and nav link targets; zero console, page or network errors. Earlier UPI browser flow (link contents, refresh resume, claim, admin verify, auto update) also re-passed on the new UI. Not tested: a physical printer, a real UPI app or phone, iOS Safari, a payment provider, Render deployment.
 
@@ -124,12 +124,11 @@ All of the above, plus the fixes listed in the Change Log.
 
 ## Pending
 
-1. Real logo file (`public/assets/logo.png`).
-2. Per-shop onboarding: real UPI ID (merchant preferred), prices, printer test with the agent's `print_command`.
-3. Automatic UPI verification needs a provider account plus an adapter to the webhook contract.
-4. Production deployment (Render, persistent disk, https `APP_URL`), document retention policy, object storage.
-5. Multi-document orders, staff accounts per shop, refunds workflow.
-6. The real logo (`public/assets/logo.png`) and a favicon; the placeholder text SVG is rendered in a fallback font.
+1. Production deployment (HTTPS `APP_URL`, persistent private upload disk, backups and restore rehearsal) has not been verified.
+2. Per-shop onboarding still needs owner-approved UPI/payee details, prices/options, admin account and physical printer validation. The local agent config exists but its executable is unavailable on this PC.
+3. UPI is manually verified today. Automatic verification needs a chosen provider, merchant account and provider-specific adapter.
+4. Owner requested print files be automatically removed about 10 minutes after completed printing. The minute-scheduled cleanup removes source and generated photo PDFs, retains order/payment/audit metadata, and prevents retry after deletion. Backup snapshot retention still needs alignment with the deletion promise.
+5. Multi-document orders, staff accounts per shop and refunds workflow are optional business decisions, not selected requirements.
 
 ## Known Issues / Limitations
 

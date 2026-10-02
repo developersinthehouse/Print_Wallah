@@ -1,6 +1,7 @@
 import pathlib
 import tempfile
 import unittest
+import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -61,6 +62,57 @@ class AgentTests(unittest.TestCase):
             print_agent.print_job(self.config, self.job)
         run.assert_not_called()
         self.assertEqual(request.call_args.args[3]["status"], "completed")
+
+    def test_config_rejects_a_missing_print_executable(self):
+        config_path = pathlib.Path(self.temp.name) / "config.json"
+        config_path.write_text(json.dumps({
+            "server_url": "https://print.example.com",
+            "shop_id": "SHOP1",
+            "agent_token": "private-test-token",
+            "printer_name": "Counter Printer",
+            "print_command": ["missing-printer-tool", "{file}"],
+        }), encoding="utf-8")
+
+        with patch.object(print_agent, "CONFIG_PATH", config_path), patch.object(print_agent.shutil, "which", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "print_command executable"):
+                print_agent.read_config()
+
+    def test_glossy_paper_type_is_forwarded_to_print_command(self):
+        config = dict(self.config)
+        config["allow_glossy"] = True
+        config["print_command"] = [
+            "printcmd", "--copies={copies}", "--pages={page_range}",
+            "--paper={paper_type}", "{file}",
+        ]
+        job = dict(self.job)
+        job["config"] = {**self.job["config"], "paperType": "glossy"}
+
+        with patch.object(print_agent, "request", return_value=b"%PDF-test"), patch.object(
+            print_agent.subprocess,
+            "run",
+            return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+        ) as run:
+            print_agent.print_job(config, job)
+
+        self.assertIn("--paper=glossy", run.call_args.args[0])
+
+    def test_glossy_order_is_not_sent_to_printer_by_default(self):
+        job = dict(self.job)
+        job["config"] = {**self.job["config"], "paperType": "glossy"}
+        with patch.object(print_agent, "request", return_value={}) as request, patch.object(print_agent.subprocess, "run") as run:
+            print_agent.print_job(self.config, job)
+        run.assert_not_called()
+        self.assertEqual(request.call_args.args[3]["status"], "failed")
+        self.assertIn("Glossy-paper jobs are disabled", request.call_args.args[3]["error"])
+
+    def test_long_print_renews_the_specific_job_lease(self):
+        heartbeat = print_agent.Heartbeat(self.config, "job-1")
+
+        with patch.object(print_agent, "request", return_value={}) as request:
+            heartbeat.renew_lease()
+
+        self.assertEqual(request.call_args.args[1], "/api/agent/SHOP1/jobs/job-1/heartbeat")
+        self.assertEqual(request.call_args.args[2], "POST")
 
 
 if __name__ == "__main__":

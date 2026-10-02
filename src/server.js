@@ -7,6 +7,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { initialize, pool } = require('./db');
 const api = require('./routes/api');
+const { createAgentLeaseRouter } = require('./routes/agentLease');
+const { cleanupCompletedOrderFiles } = require('./services/retention');
 const jwt = require('jsonwebtoken');
 const { lanAddresses, isLocalHost } = require('./services/network');
 const { webhookEnabled } = require('./services/webhook');
@@ -32,6 +34,12 @@ async function main() {
   cleanupUploads().catch(error => console.error('Upload cleanup failed:', error.message));
   const cleanupTimer = setInterval(() => cleanupUploads().catch(error => console.error('Upload cleanup failed:', error.message)), 60 * 60 * 1000);
   cleanupTimer.unref();
+  const cleanupCompletedFiles = () => cleanupCompletedOrderFiles({ pool, uploadDir })
+    .then(({ ordersDeleted }) => { if (ordersDeleted) console.log(`Deleted print files for ${ordersDeleted} completed order(s)`); })
+    .catch(error => console.error('Completed-order file cleanup failed:', error.message));
+  cleanupCompletedFiles();
+  const retentionTimer = setInterval(cleanupCompletedFiles, 60 * 1000);
+  retentionTimer.unref();
 
   const app = express();
   app.disable('x-powered-by');
@@ -55,12 +63,18 @@ async function main() {
   app.use('/api/shops', limiter(900));
   app.use('/api/orders', limiter(900, { skip: (req) => req.method !== 'GET' }));
   app.use('/api/orders', limiter(80, { skip: (req) => req.method === 'GET' }));
+  app.use('/api/agent/:shopId', createAgentLeaseRouter(pool));
   app.use('/api', api);
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
   // Until the real logo is dropped in as public/assets/logo.png, serve the placeholder at the same URL so pages never show a broken image or a 404.
   app.get('/assets/logo.png', (_req, res, next) => {
     const real = path.join(__dirname, '..', 'public', 'assets', 'logo.png');
     if (fs.existsSync(real)) return next();
+    const printWallahLogo = path.join(__dirname, '..', 'public', 'assets', 'print-wallah_logo.png');
+    if (fs.existsSync(printWallahLogo)) {
+      res.set('Cache-Control', 'no-cache').type('image/png').sendFile(printWallahLogo);
+      return;
+    }
     res.set('Cache-Control', 'no-cache').type('image/svg+xml').sendFile(path.join(__dirname, '..', 'public', 'assets', 'logo-placeholder.svg'));
   });
   app.use(express.static(path.join(__dirname, '..', 'public'), { extensions: ['html'], setHeaders: (res) => res.set('Cache-Control', 'no-cache') }));
@@ -78,7 +92,7 @@ async function main() {
   const host = process.env.HOST || '0.0.0.0'; // reachable from other devices on the same network; set HOST=127.0.0.1 to keep it local
   const server = app.listen(port, host, () => printBanner(port, host));
   server.on('error', (error) => { console.error(error.code === 'EADDRINUSE' ? `Port ${port} is already in use. Stop the other process or set PORT in .env.` : `Server error: ${error.message}`); process.exit(1); });
-  const shutdown = () => server.close(async () => { await pool.end(); process.exit(0); });
+  const shutdown = () => { clearInterval(cleanupTimer); clearInterval(retentionTimer); server.close(async () => { await pool.end(); process.exit(0); }); };
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
 }
 

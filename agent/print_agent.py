@@ -7,6 +7,7 @@ import os
 import pathlib
 import re
 import shlex
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -32,12 +33,26 @@ def read_config():
     for key in ("server_url", "shop_id", "agent_token", "printer_name"):
         if not str(config.get(key, "")).strip():
             raise RuntimeError(f"Missing {key} in {CONFIG_PATH}")
+    server_url = urllib.parse.urlparse(config["server_url"])
+    if server_url.scheme not in ("http", "https") or not server_url.netloc:
+        raise RuntimeError("server_url must be an absolute HTTP(S) URL")
     command = config.get("print_command")
     if isinstance(command, str):
         command = shlex.split(command, posix=os.name != "nt")
-    if not isinstance(command, list) or not command or not any("{file}" in item for item in command):
+    if (
+        not isinstance(command, list) or
+        not command or
+        any(not isinstance(item, str) for item in command) or
+        not any("{file}" in item for item in command)
+    ):
         raise RuntimeError("Set print_command to an argument array containing the {file} placeholder")
+    if not (shutil.which(command[0]) or pathlib.Path(command[0]).is_file()):
+        raise RuntimeError("The print_command executable is not installed or its path is invalid")
+    allow_glossy = config.get("allow_glossy", False)
+    if not isinstance(allow_glossy, bool):
+        raise RuntimeError("allow_glossy must be true or false")
     config["print_command"] = command
+    config["allow_glossy"] = allow_glossy
     config["server_url"] = config["server_url"].rstrip("/")
     config["poll_seconds"] = max(3, min(120, int(config.get("poll_seconds", 8))))
     return config
@@ -107,6 +122,12 @@ def print_job(config, job):
         return
 
     options = job["config"]
+    if options.get("paperType", "normal") == "glossy" and not config.get("allow_glossy", False):
+        message = "Glossy-paper jobs are disabled for automatic printing on this agent. Confirm printer media settings before handling the order manually."
+        logger.error("Order %s cannot print: %s", job["order_code"], message)
+        save_state(job_id, "failed")
+        report(config, job_id, "failed", message)
+        return
     required = []
     if int(job["copies"]) > 1:
         required.append("{copies}")
@@ -118,6 +139,8 @@ def print_job(config, job):
         required.append("{duplex}")
     if options.get("paperSize", "A4") != "A4":
         required.append("{paper_size}")
+    if options.get("paperType", "normal") != "normal":
+        required.append("{paper_type}")
     if options.get("orientation", "portrait") != "portrait":
         required.append("{orientation}")
     if options.get("scaling", "fit") != "fit":
@@ -144,6 +167,7 @@ def print_job(config, job):
         "copies": str(job["copies"]),
         "page_range": requested_range if requested_range != "all" else f"1-{page_count}",
         "paper_size": str(options.get("paperSize", "A4")),
+        "paper_type": str(options.get("paperType", "normal")),
         "color": "color" if options.get("color") else "monochrome",
         "duplex": "two-sided-long-edge" if options.get("duplex") else "one-sided",
         "orientation": "4" if options.get("orientation") == "landscape" else "3",
@@ -155,7 +179,7 @@ def print_job(config, job):
     save_state(job_id, "started")
     try:
         logger.info("Sending order %s to printer %s", job["order_code"], config["printer_name"])
-        with Heartbeat(config):
+        with Heartbeat(config, job_id):
             result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=15 * 60)
         if result.returncode != 0:
             message = (result.stderr or result.stdout or f"Print command exited {result.returncode}")[:900]
@@ -180,14 +204,22 @@ def print_job(config, job):
 class Heartbeat:
     """Keeps the shop marked online while a long print command runs (the main loop is blocked meanwhile)."""
 
-    def __init__(self, config, interval=20):
-        self.config, self.interval, self.stop = config, interval, threading.Event()
+    def __init__(self, config, job_id, interval=20):
+        self.config, self.job_id, self.interval, self.stop = config, job_id, interval, threading.Event()
+
+    def renew_lease(self):
+        request(
+            self.config,
+            f"/api/agent/{urllib.parse.quote(self.config['shop_id'])}/jobs/{urllib.parse.quote(self.job_id)}/heartbeat",
+            "POST",
+            {"agentName": self.config.get("agent_name", "Shop print agent")},
+        )
 
     def __enter__(self):
         def loop():
             while not self.stop.wait(self.interval):
                 try:
-                    request(self.config, f"/api/agent/{urllib.parse.quote(self.config['shop_id'])}/heartbeat", "POST", {"agentName": self.config.get("agent_name", "Shop print agent")})
+                    self.renew_lease()
                 except Exception as error:  # a missed heartbeat must never affect the print itself
                     logger.warning("Heartbeat during print failed: %s", error)
         threading.Thread(target=loop, daemon=True).start()

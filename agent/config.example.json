@@ -4,6 +4,7 @@
   "agent_token": "COPY_ONCE_FROM_SUPER_ADMIN",
   "agent_name": "Front counter PC",
   "printer_name": "Office Printer",
+  "allow_glossy": false,
   "poll_seconds": 8,
   "print_command": [
     "lp", "-d", "{printer}", "-n", "{copies}", "-P", "{page_range}",

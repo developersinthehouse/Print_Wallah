@@ -4,11 +4,11 @@
 2. In Render, create a PostgreSQL database. Copy its internal connection string for the web service.
 3. Create a **Web Service** from the repository. Choose Node as the runtime, `npm install` as the build command, and `npm start` as the start command.
 4. Add `DATABASE_URL`, `DATABASE_SSL`, `APP_URL`, `JWT_SECRET`, `SUPER_ADMIN_EMAIL`, and `SUPER_ADMIN_PASSWORD` in the web service environment settings. Use the exact public service URL for `APP_URL`.
-5. Add a persistent disk and mount it, for example at `/var/data/print-wallah`. Set `UPLOAD_DIR=/var/data/print-wallah`. Without persistent storage, customer documents can be lost when an instance restarts or deploys.
+5. Add a persistent disk and mount it, for example at `/var/data/print-wallah`. Set `UPLOAD_DIR=/var/data/print-wallah`. Production uploads fail closed with HTTP 503 until `UPLOAD_DIR` is an absolute path, so the service will not silently accept files on ephemeral storage.
 6. Deploy. The application creates tables at startup. Visit the service root, sign in as the Super Admin, and create the first shop.
 7. Verify HTTPS is enabled, create a test shop, scan/download its QR, check the customer portal, and install its print agent on the shop computer.
 
-Back up PostgreSQL and the upload disk together. They contain related order and document records. Restrict database credentials and admin passwords. Use a payment gateway with server-verified callbacks before automating online payment approvals.
+Owner decision: do not back up customer file bytes; they are deleted from live storage about 10 minutes after successful printing. Back up PostgreSQL order/payment/audit metadata, but configure disk snapshots so they cannot retain customer files past the stated deletion promise. Restrict database credentials and admin passwords. UPI remains manually verified; do not automate approvals until a provider adapter is configured.
 
 ## Render environment settings
 

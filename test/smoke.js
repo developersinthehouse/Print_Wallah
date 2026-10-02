@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Pool } = require('pg');
+const { PDFDocument } = require('pdf-lib');
 require('dotenv').config();
 const base = process.env.SMOKE_URL || 'http://127.0.0.1:3000';
 const createdShopIds = [];
@@ -119,6 +120,39 @@ async function main() {
   const completed = await fetch(`${base}/api/agent/${shopA.shop.id}/jobs/${claimed.job.job_id}/result`, { method: 'POST', headers: { Authorization: `Bearer ${shopA.agentToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'completed' }) });
   assert.equal(completed.status, 200);
   assert.equal((await superAdmin(`/orders/${orderA.order.code}/status`)).order_status, 'completed');
+
+  const bundleUploads = [];
+  for (const [name, bytes, mime] of [
+    ['bundle-two-pages.pdf', pdf(2), 'application/pdf'],
+    ['bundle-one-page.pdf', pdf(1), 'application/pdf'],
+    ['bundle-image.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64'), 'image/png'],
+  ]) {
+    const form = new FormData();
+    form.append('document', new Blob([bytes], { type: mime }), name);
+    bundleUploads.push(await superAdmin(`/shops/${shopA.shop.id}/uploads`, { method: 'POST', body: form }));
+  }
+  const documentTokens = bundleUploads.map((item) => item.uploadToken);
+  const bundleConfig = { mode: 'document', copies: 2, color: false, paperSize: 'A4', paperType: 'normal', duplex: false, pageRange: 'all' };
+  const bundleQuote = await superAdmin(`/shops/${shopA.shop.id}/price`, post({ uploadToken: documentTokens[0], documentTokens, config: bundleConfig }));
+  assert.equal(bundleQuote.pages, 4, 'bundle quote sums server-detected pages across PDFs and images');
+  assert.equal(bundleQuote.total, 24, 'shared copies and the shop rate apply to all bundle pages');
+  const bundleOrder = await superAdmin(`/shops/${shopA.shop.id}/orders`, post({ uploadToken: documentTokens[0], documentTokens, paymentMethod: 'cash', config: bundleConfig, expectedAmount: bundleQuote.total }));
+  assert.equal(bundleOrder.order.amount, 24);
+  assert.equal(bundleOrder.order.config.fileName, '3 files');
+  const bundleAdminOrder = (await adminA('/admin/orders')).find((item) => item.order_code === bundleOrder.order.code);
+  assert.deepEqual(bundleAdminOrder.config.documentFiles, bundleUploads.map((item) => item.fileName));
+  await adminA(`/admin/orders/${bundleAdminOrder.id}/cash-confirm`, post({}));
+  const bundleClaimResponse = await fetch(`${base}/api/agent/${shopA.shop.id}/jobs`, { headers: { Authorization: `Bearer ${shopA.agentToken}` } });
+  const bundleClaim = await bundleClaimResponse.json();
+  assert.equal(bundleClaim.job.order_code, bundleOrder.order.code);
+  assert.equal(bundleClaim.job.page_count, 4);
+  assert.equal(bundleClaim.job.copies, 2, 'document bundle preserves customer-selected copies');
+  const bundleFileResponse = await fetch(`${base}${bundleClaim.job.downloadUrl}`, { headers: { Authorization: `Bearer ${shopA.agentToken}` } });
+  assert.equal(bundleFileResponse.status, 200);
+  const printableBundle = await PDFDocument.load(Buffer.from(await bundleFileResponse.arrayBuffer()));
+  assert.equal(printableBundle.getPageCount(), 4, 'agent downloads a combined PDF containing every selected page');
+  const bundleDone = await fetch(`${base}/api/agent/${shopA.shop.id}/jobs/${bundleClaim.job.job_id}/result`, { method: 'POST', headers: { Authorization: `Bearer ${shopA.agentToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'completed' }) });
+  assert.equal(bundleDone.status, 200);
 
   const fileB = await upload(shopB.shop.id);
   const orderB = await superAdmin(`/shops/${shopB.shop.id}/orders`, post({ uploadToken: fileB.uploadToken, paymentMethod: 'upi', config: { copies: 1, color: false, paperSize: 'A4', paperType: 'normal', duplex: false } }));

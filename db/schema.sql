@@ -66,9 +66,11 @@ CREATE TABLE IF NOT EXISTS orders (
 );
 CREATE INDEX IF NOT EXISTS orders_shop_created_idx ON orders (shop_id, created_at DESC);
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS print_file_name TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS files_deleted_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS orders_upload_unique_idx ON orders (upload_id);
 CREATE INDEX IF NOT EXISTS orders_queue_idx ON orders (shop_id, print_status, created_at);
 CREATE INDEX IF NOT EXISTS orders_status_idx ON orders (shop_id, order_status, created_at DESC);
+CREATE INDEX IF NOT EXISTS orders_file_retention_idx ON orders (completed_at) WHERE order_status = 'completed' AND files_deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS payments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

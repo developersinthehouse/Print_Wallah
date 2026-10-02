@@ -13,6 +13,9 @@ Print Wallah is a lightweight multi-shop printing platform made by DEVELOPERS. I
 - Shop dashboard, order filtering, document access, cash/payment review, date-range analytics, settings, and print-job controls.
 - Atomic shop-specific print-job leasing and a Python agent that runs a configured OS print command and reports the result.
 - Photo quantity/sheet calculation and printable PDF output with selected photo size, page orientation, margins, crop, and cut guides.
+- Up to 10 PDFs/JPGs/PNGs can be bundled under one shared print configuration and one payment; the server creates a combined print-ready PDF.
+- Completed print files are deleted from live storage about 10 minutes after successful printing; order, payment and audit metadata remains.
+- Shop Admin and Super Admin provide daily/monthly Asia/Kolkata analytics, per-shop comparison and CSV export.
 - Dark, mobile-first customer portal with a real print preview (paper size, orientation, scaling, margins, colour, copies, PDF pages, photo layouts), multi-photo sheets and a full UPI/cash checkout with order tracking.
 - Optional signed payment webhook for automatic UPI confirmation (`docs/PAYMENTS.md`).
 
@@ -66,7 +69,7 @@ The server also initializes the schema on startup, so `npm run db:init` is safe 
 
 See [Render deployment](docs/DEPLOYMENT.md). Create a PostgreSQL database and a Node web service. Configure `DATABASE_URL`, `DATABASE_SSL`, `APP_URL`, `JWT_SECRET`, `SUPER_ADMIN_EMAIL`, and `SUPER_ADMIN_PASSWORD` as Render environment variables. Set build command to `npm install` and start command to `npm start`.
 
-Uploaded documents are kept in `UPLOAD_DIR`. The app does not expose that directory as static content. The default local directory is `./storage`; production must mount persistent storage at the chosen path and set `UPLOAD_DIR` to it. Render's ephemeral filesystem is not suitable for customer files across deploys/restarts.
+Uploaded documents are kept in `UPLOAD_DIR`. The app does not expose that directory as static content. The default local directory is `./storage`; production must mount persistent storage at the chosen absolute path and set `UPLOAD_DIR` to it. Production uploads return 503 if this is not configured. Render's ephemeral filesystem is not suitable for customer files across deploys/restarts.
 
 ## Payment and printing setup
 

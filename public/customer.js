@@ -150,6 +150,7 @@ function renderHome() {
     <section class="hero"><div><div class="eyebrow">Print online</div><h1>${esc(s.name)}</h1>
       <div class="where">${s.address || s.city ? `<span>${icon('pin', 18)}${esc([s.address, s.city].filter(Boolean).join(', '))}</span>` : ''}${s.phone ? `<a href="tel:${esc(s.phone.replace(/[^\d+]/g, ''))}">${icon('phone', 18)}${esc(s.phone)}</a>` : ''}${rate ? `<span>${icon('rupee', 18)}${rate}</span>` : ''}</div></div>
       <ol class="steps" aria-label="How it works"><li>${icon('upload', 34)}Upload</li><li>${icon('sliders', 34)}Set up</li><li>${icon('pay', 34)}Pay</li><li>${icon('printer', 34)}Collect</li></ol></section>
+    <p class="retention-note" role="note">Print files are automatically deleted about 10 minutes after printing completes. Order and payment records are retained.</p>
     ${C.notice ? `<div class="inline-notice ${C.notice.kind} mb" id="home-notice" style="margin-bottom:var(--s-5)">${esc(C.notice.text)}</div>` : ''}
     ${s.printerOnline ? '' : `<div class="inline-notice warn" style="margin-bottom:var(--s-5)">The shop's print computer is not connected right now. You can still place your order. It prints when the shop reconnects.</div>`}
     ${a ? `<div class="resume-banner">${icon('printer', 44)}<div><strong>You have an order in progress</strong><div class="subtext">${esc(a.code)} &middot; ${money(a.amount)} &middot; ${esc(orderStateText(a))}</div></div><a class="button button-primary button-small" href="/shop/${encodeURIComponent(s.id)}?order=${encodeURIComponent(a.code)}">View order</a></div>` : ''}
@@ -168,7 +169,7 @@ function renderFileArea() { C.items.length ? renderFileCard() : renderDropzone()
 function renderDropzone() {
   const card = document.querySelector('#file-card'), photo = C.cfg.mode === 'photo', max = window.MAX_UPLOAD_MB || 30;
   card.innerHTML = `<div class="card-title">${icon(photo ? 'photo' : 'doc')}<div><span class="step">Step 1</span><h2>${photo ? 'Choose your photos' : 'Choose your file'}</h2></div></div>
-    <label class="dropzone" id="dropzone">${icon('upload')}<input type="file" id="file-input" accept="${photo ? 'image/jpeg,image/png,.jpg,.jpeg,.png' : 'application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png'}" multiple><strong>${photo ? 'Tap to choose photos' : 'Tap to choose a file'}</strong><span class="subtext">${photo ? 'JPG or PNG' : 'PDF, JPG or PNG'}, up to ${max} MB${photoAvailable() && !photo ? '. Choose several photos to print them on one sheet.' : ''}</span></label>
+    <label class="dropzone" id="dropzone">${icon('upload')}<input type="file" id="file-input" accept="${photo ? 'image/jpeg,image/png,.jpg,.jpeg,.png' : 'application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png'}" multiple><strong>${photo ? 'Tap to choose photos' : 'Tap to choose files'}</strong><span class="subtext">${photo ? 'JPG or PNG' : 'PDF, JPG or PNG'}, up to ${max} MB each${photoAvailable() && !photo ? '. Choose several photos to print them on one sheet.' : ' · Select up to 10 documents/images for one combined order.'}</span></label>
     <div class="form-error mt-4" id="upload-error"></div><div class="progress hidden" id="upload-progress"><span></span></div>`;
   const zone = card.querySelector('#dropzone'), input = card.querySelector('#file-input');
   input.onchange = () => { if (input.files.length) handleFiles([...input.files]); input.value = ''; };
@@ -212,8 +213,8 @@ async function handleFiles(files, { adding = false } = {}) {
   const wantPhotos = adding || C.cfg.mode === 'photo';
   const pdfPick = accepted.find((a) => a.mime === 'application/pdf');
   if (wantPhotos) { if (pdfPick) toast('PDFs are printed as documents, not photo sheets.'); accepted = accepted.filter((a) => a.mime !== 'application/pdf'); if (!accepted.length) return; }
-  else if (pdfPick) { if (accepted.length > 1) toast('Documents are printed one PDF at a time. Using the first PDF.'); accepted = [pdfPick]; }
-  else if (!photoAvailable()) accepted = accepted.slice(0, 1);
+  if (!wantPhotos && accepted.length > 10) { accepted = accepted.slice(0, 10); toast('A combined print order can contain up to 10 files.'); }
+  if (!wantPhotos && accepted.reduce((sum, item) => sum + item.file.size, 0) > 100 * 1024 * 1024) { show('The combined files exceed the 100 MB order limit. Choose fewer or smaller files.'); return; }
   if (adding && C.items.length + accepted.length > 12) { accepted = accepted.slice(0, 12 - C.items.length); toast('A photo sheet can hold up to 12 different photos.'); }
   if (!accepted.length) return;
   if (errorBox) errorBox.textContent = '';
@@ -251,18 +252,27 @@ async function setupDocument() {
     main.pageMm = main.px.map((p) => p * 25.4 / IMAGE_DPI);
     if (main.px[0] > main.px[1]) orientation = 'landscape';
   }
-  const isImage = main.mime !== 'application/pdf';
-  cfg.mode = isImage && photoAvailable() && (C.items.length > 1 || cfg.mode === 'photo') ? 'photo' : 'document';
+  const allImages = C.items.every((item) => item.mime !== 'application/pdf');
+  cfg.mode = allImages && photoAvailable() && (C.items.length > 1 || cfg.mode === 'photo') ? 'photo' : 'document';
   cfg.orientation = cfg.mode === 'photo' ? 'portrait' : orientation;
   cfg.rangeMode = 'all'; cfg.pageRange = 'all'; cfg.copies = 1; cfg.scaling = 'fit'; cfg.duplex = false;
   normalizeCfg(); renderFileCard(); renderSettings(); renderEditor(); drawPreview(); scheduleQuote();
 }
 function renderFileCard() {
   const main = C.items[0], many = C.items.length > 1;
-  const name = many ? `${C.items.length} photos` : main.upload.fileName;
-  const meta = main.mime === 'application/pdf' ? `${main.upload.pages} page${main.upload.pages === 1 ? '' : 's'} | ${formatBytes(main.upload.size)}` : many ? 'Photos ready to print' : `${main.upload.width || main.px[0]} x ${main.upload.height || main.px[1]} px | ${formatBytes(main.upload.size)}`;
-  document.querySelector('#file-card').innerHTML = `<div class="card-title">${icon(main.mime === 'application/pdf' ? 'doc' : 'photo')}<div><span class="step">Step 1</span><h2>Your file</h2></div></div><div class="file-line"><div class="file-meta"><div class="file-name">${esc(name)}</div><div class="subtext">${esc(meta)}</div></div><button class="button button-light button-small" id="change-file" type="button">Change</button></div>${C.previewFailed ? '<div class="inline-notice warn mt-4">This PDF could not be previewed here, but it can still be printed. The preview shows a blank page.</div>' : ''}`;
+  const bundle = many && C.cfg.mode !== 'photo';
+  const pages = bundle ? C.items.reduce((sum, item) => sum + Number(item.upload.pages || 1), 0) : Number(main.upload.pages || 1);
+  const name = many ? `${C.items.length} ${bundle ? 'files' : 'photos'}` : main.upload.fileName;
+  const meta = bundle ? `${pages} total pages · one print order` : main.mime === 'application/pdf' ? `${main.upload.pages} page${main.upload.pages === 1 ? '' : 's'} | ${formatBytes(main.upload.size)}` : many ? 'Photos ready to print' : `${main.upload.width || main.px[0]} x ${main.upload.height || main.px[1]} px | ${formatBytes(main.upload.size)}`;
+  const fileList = bundle ? `<div class="file-meta mt-3">${C.items.map((item, i) => `<div class="file-line"><span class="file-name">${esc(item.upload.fileName)} · ${item.upload.pages || 1} page${Number(item.upload.pages || 1) === 1 ? '' : 's'}</span><button class="button button-light button-small" type="button" data-remove-document="${i}" aria-label="Remove ${esc(item.upload.fileName)}">Remove</button></div>`).join('')}</div>` : '';
+  document.querySelector('#file-card').innerHTML = `<div class="card-title">${icon(main.mime === 'application/pdf' ? 'doc' : 'photo')}<div><span class="step">Step 1</span><h2>${bundle ? 'Your files' : 'Your file'}</h2></div></div><div class="file-line"><div class="file-meta"><div class="file-name">${esc(name)}</div><div class="subtext">${esc(meta)}</div></div><button class="button button-light button-small" id="change-file" type="button">Change</button></div>${fileList}${C.previewFailed ? '<div class="inline-notice warn mt-4">This PDF could not be previewed here, but it can still be printed. The preview shows a blank page.</div>' : ''}${bundle ? '<div class="field-hint mt-3">The preview shows the first file; all files and pages are included in the combined order.</div>' : ''}`;
   document.querySelector('#change-file').onclick = () => { revokeUrls(); C.items = []; C.quote = null; C.pdf = null; C.previewFailed = false; C.renderCache.clear(); renderDropzone(); renderSettings(); renderEditor(); drawPreview(); renderSummary({}); };
+  document.querySelectorAll('[data-remove-document]').forEach((button) => button.addEventListener('click', async () => {
+    const [removed] = C.items.splice(Number(button.dataset.removeDocument), 1);
+    if (removed.url) URL.revokeObjectURL(removed.url);
+    if (!C.items.length) { C.quote = null; C.pdf = null; renderDropzone(); renderSettings(); renderEditor(); drawPreview(); renderSummary({}); return; }
+    await setupDocument();
+  }));
 }
 
 /* ---------- Settings (always visible, locked until a file exists) ---------- */
@@ -285,7 +295,9 @@ function renderSettings() {
         <div class="field-hint mt-3" id="photo-summary">${locked ? '' : `${total} photo${total === 1 ? '' : 's'}. `}${lay.capacity} fit on one ${cfg.paperSize} sheet${lay.rotated ? ' (turned to fit more)' : ''}${locked ? '.' : `, so ${sheets} sheet${sheets === 1 ? '' : 's'}.`}</div></div>
       <div class="full inline-notice">Photo sheets print on glossy paper in colour. Thin guide lines show where to cut.</div></div>`;
   } else {
-    const range = `<div class="field full"><label>Pages</label>${seg('rangeMode', cfg.rangeMode, [['all', locked || !isPdf() ? 'All pages' : `All ${main.upload.pages}`], ['custom', 'Choose pages']])}${cfg.rangeMode === 'custom' ? `<input id="page-range" value="${esc(cfg.pageRange === 'all' ? '' : cfg.pageRange)}" placeholder="Example: 1-3, 5" inputmode="text" autocomplete="off" aria-describedby="range-msg"><div class="field-hint" id="range-msg"></div>` : ''}</div>`;
+    const documentBundle = C.items.length > 1;
+    const pageLabel = documentBundle ? `All ${C.items.reduce((sum, item) => sum + Number(item.upload.pages || 1), 0)} pages across ${C.items.length} files` : locked || !isPdf() ? 'All pages' : `All ${main.upload.pages}`;
+    const range = `<div class="field full"><label>Pages</label>${seg('rangeMode', cfg.rangeMode, [['all', pageLabel], ['custom', 'Choose pages', documentBundle]])}${cfg.rangeMode === 'custom' ? `<input id="page-range" value="${esc(cfg.pageRange === 'all' ? '' : cfg.pageRange)}" placeholder="Example: 1-3, 5" inputmode="text" autocomplete="off" aria-describedby="range-msg"><div class="field-hint" id="range-msg"></div>` : ''}</div>`;
     body = `<div class="settings-grid">${range}
       <div class="field"><label for="copies">Copies</label><div class="stepper"><button type="button" data-copies="-1" aria-label="Fewer copies">-</button><input id="copies" type="number" inputmode="numeric" min="1" max="500" value="${cfg.copies}"><button type="button" data-copies="1" aria-label="More copies">+</button></div></div>
       <div class="field"><label>Colour</label>${seg('color', cfg.color, [[false, 'Black and white'], [true, 'Colour', !pc.color]])}</div>
@@ -294,7 +306,8 @@ function renderSettings() {
       <div class="field"><label>Sides</label>${seg('duplex', cfg.duplex, [[false, 'Single-sided'], [true, 'Double-sided', !pc.duplex || cfg.paperType !== 'normal']])}</div>${orient}
       <div class="field full"><label>Scaling</label>${seg('scaling', cfg.scaling, [['fit', 'Fit to page'], ['fill', 'Fill page'], ['actual', 'Actual size']])}<div class="field-hint">${{ fit: 'The whole page is shrunk or enlarged to fit inside the printable area.', fill: 'Page covers the whole sheet. Edges may be cropped.', actual: 'Printed at its real size from the top left. Large pages are cut off.' }[cfg.scaling]}</div></div></div>`;
   }
-  const modeToggle = photoAvailable() && (locked || !isPdf()) ? `<div class="field mb-4" style="margin-bottom:var(--s-5)"><label>What are you printing?</label>${seg('mode', cfg.mode, [['document', 'Document or picture'], ['photo', 'Photo sheet']])}</div>` : '';
+  const allImages = C.items.every((item) => item.mime !== 'application/pdf');
+  const modeToggle = photoAvailable() && (locked || allImages) ? `<div class="field mb-4" style="margin-bottom:var(--s-5)"><label>What are you printing?</label>${seg('mode', cfg.mode, [['document', 'Documents / pictures'], ['photo', 'Photo sheet']])}</div>` : '';
   const card = document.querySelector('#settings-card');
   card.innerHTML = `<div class="card-title">${icon('sliders')}<div><span class="step">Step 2</span><h2>Print settings</h2></div></div>${modeToggle}<div class="${locked ? 'locked-zone' : ''}" id="settings-zone">${body}${locked ? '<div class="lock-cover" id="lock-cover" aria-hidden="true"></div>' : ''}</div>`;
   wireSettings();
@@ -360,7 +373,7 @@ function configProblem() {
 }
 
 /* ---------- Photo editor ---------- */
-const editingActive = () => hasFile() && !isPdf() && (C.cfg.mode === 'photo' || C.cfg.paperType === 'glossy');
+const editingActive = () => hasFile() && (C.cfg.mode === 'photo' || (C.items.length === 1 && !isPdf() && C.cfg.paperType === 'glossy'));
 const geometryActive = () => C.cfg.mode === 'photo';
 const frameAspect = () => { if (!geometryActive()) return null; const d = C.shop.photoSizes.find((p) => p.id === C.cfg.photoSize); return d.w / d.h; };
 const itemEdit = (it) => (editingActive() ? PhotoEdit.cleanEdit(it.edit) : PhotoEdit.cleanEdit({}));
@@ -532,10 +545,15 @@ function requestConfig(tokens) {
   if (editingActive() && PhotoEdit.isEdited(C.items[0].edit, { geometry: false })) out.imageEdit = PhotoEdit.cleanEdit(C.items[0].edit);
   return out;
 }
+function bundleUploadTokens() {
+  return C.cfg.mode === 'document' && C.items.length > 1
+    ? C.items.map((item) => item.upload.uploadToken)
+    : undefined;
+}
 async function fetchQuote() {
   const rev = ++C.revision;
   try {
-    const q = await api(`/shops/${encodeURIComponent(C.shop.id)}/price`, jsonBody({ uploadToken: C.items[0].upload.uploadToken, config: requestConfig() }));
+    const q = await api(`/shops/${encodeURIComponent(C.shop.id)}/price`, jsonBody({ uploadToken: C.items[0].upload.uploadToken, documentTokens: bundleUploadTokens(), config: requestConfig() }));
     if (rev !== C.revision) return;
     C.quote = q; renderSummary({});
   } catch (e) { if (rev !== C.revision) return; const gone = /expired|does not belong/i.test(e.message); renderSummary({ error: gone ? 'Your upload expired. Choose the file again.' : e.message, expired: gone }); }
@@ -594,7 +612,7 @@ async function submitOrder(method) {
     try { tokens = await bakeEdited((t) => { clicked.textContent = t; }); } catch (e) { throw Object.assign(new Error(`Could not prepare your edited photo. ${e.message}`), { status: 0 }); }
     clicked.innerHTML = '<span class="spinner" aria-hidden="true"></span> Sending order';
     const first = tokens ? tokens[0] : C.items[0].upload.uploadToken;
-    const res = await api(`/shops/${encodeURIComponent(C.shop.id)}/orders`, jsonBody({ uploadToken: first, paymentMethod: method, config: requestConfig(tokens), expectedAmount: C.quote.total, customerName: (C.name || '').trim(), customerPhone: (C.phone || '').trim() }));
+    const res = await api(`/shops/${encodeURIComponent(C.shop.id)}/orders`, jsonBody({ uploadToken: first, documentTokens: bundleUploadTokens(), paymentMethod: method, config: requestConfig(tokens), expectedAmount: C.quote.total, customerName: (C.name || '').trim(), customerPhone: (C.phone || '').trim() }));
     store.set(orderKey(C.shop.id), res.order.code);
     history.replaceState(null, '', `${location.pathname}?order=${encodeURIComponent(res.order.code)}`);
     C.submitting = false; C.activeOrder = null;

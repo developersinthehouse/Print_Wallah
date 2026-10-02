@@ -63,9 +63,73 @@ async function renderSuper() {
     const [overview, shops] = await Promise.all([api('/super/overview'), api('/super/shops')]); await holdLoadingState(loadingStarted); app.innerHTML = `<div class="section-heading"><div><div class="eyebrow">Platform</div><h1>Shops</h1><p>Create shops, manage their access and prices, and open each shop's customer portal.</p></div><button class="button button-primary" id="add-shop">Add a shop</button></div>
   <section class="stats-grid">${statCard('TOTAL SHOPS', overview.shops.total, 'Across the platform')}${statCard('ACTIVE', overview.shops.active, 'Ready to take orders')}${statCard('EXPIRING SOON', overview.shops.expiring, 'Within the next 7 days')}${statCard('ORDERS TODAY', overview.orders.today, `${overview.orders.pages} printed pages · ${money(overview.orders.verified_revenue)} verified`)}</section>
   <section class="panel"><div class="panel-head"><div><h3>Your shops</h3><div class="subtext">Use Details for settings and QR, or open the customer portal directly.</div></div><div class="toolbar"><input id="shop-search" placeholder="Search shops…" aria-label="Search shops"></div></div><div class="table-scroll"><table><thead><tr><th>SHOP</th><th>STATUS</th><th>ACCESS UNTIL</th><th>CUSTOMER PORTAL</th><th>ACTIONS</th></tr></thead><tbody id="shops-rows">${shops.map(shopRow).join('')}</tbody></table></div>${shops.length ? '' : `<div class="empty">${icon('empty')}<strong>No shops yet</strong>Create a shop to generate its customer portal, price card, admin login and QR code.</div>`}</section>`;
-    document.querySelector('#add-shop').onclick = () => showCreateShop(); document.querySelector('#shop-search').oninput = e => { const q = e.target.value.toLowerCase(); document.querySelectorAll('#shops-rows tr').forEach(row => row.classList.toggle('hidden', !row.dataset.search.includes(q))); }; wireShopRows();
+    app.insertAdjacentHTML('beforeend', platformAnalyticsPanel());
+    document.querySelector('#add-shop').onclick = () => showCreateShop(); document.querySelector('#shop-search').oninput = e => { const q = e.target.value.toLowerCase(); document.querySelectorAll('#shops-rows tr').forEach(row => row.classList.toggle('hidden', !row.dataset.search.includes(q))); }; wireShopRows(); wirePlatformAnalytics();
   } catch (e) { app.innerHTML = errorPanel('Could not load platform dashboard', e.message); }
 }
+function platformAnalyticsPanel() {
+  return `<section class="panel mt-6" aria-labelledby="platform-reports-title">
+    <div class="panel-head"><div><h2 id="platform-reports-title">Platform reports</h2><div class="subtext">Shop comparison · India time</div></div>
+      <div class="toolbar"><label class="sr-only" for="platform-from">From</label><input id="platform-from" type="date"><label class="sr-only" for="platform-to">To</label><input id="platform-to" type="date"><label class="sr-only" for="platform-group">Group by</label><select id="platform-group"><option value="day">Daily</option><option value="month">Monthly</option></select><button class="button button-primary button-small" id="platform-load" type="button">Load</button><button class="button button-light button-small" id="platform-csv" type="button" disabled>Export CSV</button></div>
+    </div><div id="platform-report-results" class="empty">Choose a date range and load the comparison.</div>
+  </section>`;
+}
+
+function indiaDateString(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function shiftReportDate(value, days) {
+  const date = new Date(`${value}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function reportCsv(filename, headers, rows) {
+  const csv = [headers, ...rows].map((row) => row.map((value) => `"${String(value ?? '').replaceAll('"', '""')}"`).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function loadPlatformAnalytics() {
+  const box = document.querySelector('#platform-report-results');
+  const params = new URLSearchParams({
+    from: document.querySelector('#platform-from').value,
+    to: document.querySelector('#platform-to').value,
+    groupBy: document.querySelector('#platform-group').value,
+  });
+  box.innerHTML = '<div class="loading"><span class="spinner"></span> Loading shop comparison</div>';
+  try {
+    const report = await api(`/super/analytics?${params}`);
+    const shops = report.shops;
+    const totals = shops.reduce((sum, shop) => {
+      for (const key of ['orders', 'pages', 'revenue', 'online', 'cash', 'payment_pending', 'print_failures']) sum[key] += Number(shop[key] || 0);
+      return sum;
+    }, { orders: 0, pages: 0, revenue: 0, online: 0, cash: 0, payment_pending: 0, print_failures: 0 });
+    box.innerHTML = shops.length ? `<div class="stats-grid">${statCard('ORDERS', totals.orders, 'Selected range')}${statCard('PAGES', totals.pages, 'Billable pages')}${statCard('VERIFIED REVENUE', money(totals.revenue), `UPI ${money(totals.online)} · Cash ${money(totals.cash)}`)}${statCard('NEEDS ATTENTION', totals.payment_pending + totals.print_failures, `${totals.payment_pending} pending · ${totals.print_failures} print failures`)}</div><div class="table-scroll mt-4"><table><thead><tr><th>SHOP</th><th>ORDERS</th><th>PAGES</th><th>VERIFIED REVENUE</th><th>UPI</th><th>CASH</th><th>PAYMENT PENDING</th><th>PRINT FAILURES</th></tr></thead><tbody>${shops.map((shop) => `<tr><td><div class="shop-name">${esc(shop.shop_name)}</div><div class="subtext mono">${esc(shop.shop_id)}</div></td><td>${shop.orders}</td><td>${shop.pages}</td><td>${money(shop.revenue)}</td><td>${money(shop.online)}</td><td>${money(shop.cash)}</td><td>${shop.payment_pending}</td><td>${shop.print_failures}</td></tr>`).join('')}</tbody></table></div><p class="field-hint">${report.groupBy === 'month' ? 'Monthly' : 'Daily'} comparison from ${report.from} to ${report.to} · ${report.timeZone}.</p>` : '<div class="empty">No shops or activity in this date range.</div>';
+    const csvButton = document.querySelector('#platform-csv');
+    csvButton.disabled = !shops.length;
+    csvButton.onclick = () => reportCsv(`print-wallah-platform-${report.from}-${report.to}.csv`, ['Shop ID', 'Shop', 'Orders', 'Pages', 'Verified revenue', 'UPI', 'Cash', 'Payment pending', 'Print failures'], shops.map((shop) => [shop.shop_id, shop.shop_name, shop.orders, shop.pages, shop.revenue, shop.online, shop.cash, shop.payment_pending, shop.print_failures]));
+  } catch (error) {
+    box.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+    document.querySelector('#platform-csv').disabled = true;
+  }
+}
+
+function wirePlatformAnalytics() {
+  const to = indiaDateString();
+  document.querySelector('#platform-to').value = to;
+  document.querySelector('#platform-from').value = shiftReportDate(to, -29);
+  document.querySelector('#platform-load').onclick = loadPlatformAnalytics;
+  loadPlatformAnalytics();
+}
+
 function statCard(label, value, foot) { return `<div class="stat-card"><div class="stat-label">${esc(label)}</div><div class="stat-value">${esc(value ?? '0')}</div><div class="stat-foot">${esc(foot || '')}</div></div>`; }
 function shopRow(s) { return `<tr data-shop="${esc(s.id)}" data-search="${esc(`${s.name} ${s.ownerName} ${s.city} ${s.id}`.toLowerCase())}"><td><div class="shop-name">${esc(s.name)}</div><div class="subtext">${esc(s.ownerName)} · ${esc(s.city)}</div></td><td>${statePill(s.status)}</td><td>${date(s.accessEnd)}<div class="shop-expiry">${s.status === 'active' ? daysLeft(s.accessEnd) + ' days left' : ''}</div></td><td><a class="text-button" href="/shop/${encodeURIComponent(s.id)}" target="_blank" rel="noopener" data-portal-link>Open portal ↗</a><div class="subtext mono">${esc(s.id)}</div></td><td><div class="actions"><button class="button button-light button-small" data-action="details">Details</button><button class="button button-light button-small" data-action="extend">Extend</button><button class="button ${s.status === 'locked' ? 'button-primary' : 'button-danger'} button-small" data-action="lock">${s.status === 'locked' ? 'Unlock' : 'Lock'}</button></div></td></tr>`; }
 function daysLeft(value) { return Math.max(0, Math.ceil((new Date(value) - Date.now()) / 86400000)); }
@@ -102,7 +166,7 @@ async function renderAdminTab() {
   document.querySelectorAll('.admin-nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === adminTab)); const target = document.querySelector('#admin-content'); if (!target) return; target.innerHTML = '<div class="loading"><span class="spinner"></span> Loading</div>'; try {
     if (adminTab === 'overview') { const data = await api('/admin/overview'); target.innerHTML = `<section class="stats-grid">${adminStatCards(data)}</section><div class="section-heading" style="margin-top:32px"><div><h2>Latest activity</h2><p>Recent orders and print jobs.</p></div><button class="button button-light button-small" id="go-orders">Open order desk →</button></div>${compactOrderTable(data.recent)}`; document.querySelector('#go-orders').onclick = () => { adminTab = 'orders'; renderAdminTab(); }; wireOrderActions(); }
     else if (adminTab === 'orders') { const rows = await api('/admin/orders'); adminOrdersSignature = ordersSignature(rows); target.innerHTML = `<div class="panel"><div class="panel-head"><div><h3>Order desk</h3><div class="subtext">Confirm UPI payments against your account. Orders update automatically.</div></div><div class="toolbar"><input id="order-search" placeholder="Order or file name…"><select id="order-filter"><option value="">All states</option>${['cash_confirmation_pending', 'pending_payment', 'payment_review', 'print_queued', 'printing', 'completed', 'failed', 'cancelled'].map(s => `<option value="${s}">${s.replaceAll('_', ' ')}</option>`).join('')}</select></div></div><div id="order-table">${orderTable(rows, false)}</div></div>`; document.querySelector('#order-search').oninput = filterOrderRows; document.querySelector('#order-filter').onchange = filterOrderRows; wireOrderActions(); }
-    else if (adminTab === 'analytics') { target.innerHTML = `<div class="panel"><div class="panel-head"><div><h3>Print activity</h3><div class="subtext">Daily totals for a date range</div></div><div class="toolbar"><input id="analytics-from" type="date"><input id="analytics-to" type="date"><button class="button button-primary button-small" id="analytics-load">Load</button></div></div><div id="analytics-results" class="empty">Choose a date range, or load the latest 30 days.</div></div>`; const to = new Date(), from = new Date(Date.now() - 29 * 86400000); document.querySelector('#analytics-from').value = from.toISOString().slice(0, 10); document.querySelector('#analytics-to').value = to.toISOString().slice(0, 10); document.querySelector('#analytics-load').onclick = loadAnalytics; loadAnalytics(); }
+    else if (adminTab === 'analytics') { target.innerHTML = `<div class="panel"><div class="panel-head"><div><h3>Print activity</h3><div class="subtext">Daily or monthly totals · Asia/Kolkata</div></div><div class="toolbar"><input id="analytics-from" type="date" aria-label="From date"><input id="analytics-to" type="date" aria-label="To date"><select id="analytics-group" aria-label="Report grouping"><option value="day">Daily</option><option value="month">Monthly</option></select><button class="button button-primary button-small" id="analytics-load" type="button">Load</button><button class="button button-light button-small" id="analytics-csv" type="button" disabled>Export CSV</button></div></div><div id="analytics-results" class="empty">Choose a date range and load the report.</div></div>`; const to = indiaDateString(); document.querySelector('#analytics-from').value = shiftReportDate(to, -29); document.querySelector('#analytics-to').value = to; document.querySelector('#analytics-load').onclick = loadAnalytics; loadAnalytics(); }
     else { target.innerHTML = shopSettingsForm(shop); document.querySelector('#settings-form-admin').onsubmit = saveShopSettings; document.querySelector('#rotate-agent').onclick = rotateAgent; }
   } catch (e) { target.innerHTML = `<div class="inline-notice">${esc(e.message)}</div>`; }
 }
@@ -110,7 +174,36 @@ function orderTable(rows, compact) { if (!rows.length) return `<div class="empty
 function orderAction(o) { if (o.order_status === 'cash_confirmation_pending') return '<button class="button button-primary button-small" data-action="cash-confirm">Confirm cash</button><button class="button button-danger button-small" data-action="cancel">Cancel order</button>'; if (o.order_status === 'payment_review' || o.order_status === 'pending_payment') return `<button class="button button-primary button-small" data-action="payment-verify">Payment received</button><button class="button button-danger button-small" data-action="payment-fail">${o.order_status === 'payment_review' ? 'Not received' : 'Cancel'}</button>`; if (o.order_status === 'failed' && o.payment_status === 'verified') return '<button class="button button-primary button-small" data-action="retry-print">Retry print</button>'; if (o.order_status === 'printing') return '<button class="button button-light button-small" data-action="complete">Mark complete</button><button class="button button-danger button-small" data-action="print-failed">Mark failed</button>'; if (o.order_status === 'print_queued') return '<span class="subtext">Waiting for printer</span><button class="button button-danger button-small" data-action="cancel">Cancel order</button>'; return ''; }
 function wireOrderActions() { document.querySelectorAll('[data-order] [data-action]').forEach(btn => btn.onclick = async () => { const row = btn.closest('[data-order]'), id = row.dataset.order, action = btn.dataset.action; if (action === 'payment-verify' && !confirm('Confirm only if the exact amount reached this shop’s UPI account. The order code is in the payment note. The job is queued for printing right away.')) return; if (action === 'cancel' && !confirm('Cancel this order? It will not be printed. Refund any payment yourself.')) return; if (action === 'payment-fail' && !confirm('Mark this UPI payment as not received?')) return; const label = btn.textContent; btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.innerHTML = '<span class="spinner" aria-hidden="true"></span> Updating'; try { const routeName = action === 'payment-fail' ? 'payment-verify' : action; await api(`/admin/orders/${encodeURIComponent(id)}/${routeName}`, jsonBody(action === 'payment-verify' || action === 'payment-fail' ? { verified: action === 'payment-verify' } : {})); toast(action === 'payment-verify' ? 'Payment verified and job queued.' : 'Order updated.'); renderAdminTab(); } catch (e) { toast(e.message); btn.disabled = false; btn.removeAttribute('aria-busy'); btn.textContent = label; } }); }
 function filterOrderRows() { const q = document.querySelector('#order-search').value.toLowerCase(), status = document.querySelector('#order-filter').value; document.querySelectorAll('[data-order]').forEach(row => row.classList.toggle('hidden', !(row.dataset.search.includes(q) && (!status || row.dataset.status === status)))); }
-async function loadAnalytics() { const box = document.querySelector('#analytics-results'); box.innerHTML = '<div class="loading"><span class="spinner"></span> Loading totals</div>'; try { const rows = await api(`/admin/analytics?from=${document.querySelector('#analytics-from').value}&to=${document.querySelector('#analytics-to').value}`); if (!rows.length) { box.innerHTML = '<div class="empty">No print activity in this date range.</div>'; return; } const max = Math.max(1, ...rows.map(r => Number(r.orders))); box.innerHTML = `<div class="metric-chart">${rows.map(r => `<div class="bar-col"><div class="bar" title="${date(r.activity_date)} · ${r.orders} orders · ${money(r.revenue)}" style="height:${Math.max(3, Number(r.orders) / max * 125)}px"></div><span class="bar-label">${new Date(r.activity_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}</span></div>`).join('')}</div><div class="table-scroll"><table><thead><tr><th>DAY</th><th>ORDERS</th><th>PAGES</th><th>REVENUE</th><th>ONLINE</th><th>CASH</th></tr></thead><tbody>${rows.map(r => `<tr><td>${date(r.activity_date)}</td><td>${r.orders}</td><td>${r.pages}</td><td>${money(r.revenue)}</td><td>${money(r.online)}</td><td>${money(r.cash)}</td></tr>`).join('')}</tbody></table></div>`; } catch (e) { box.innerHTML = `<div class="empty">${esc(e.message)}</div>`; } }
+async function loadAnalytics() {
+  const box = document.querySelector('#analytics-results');
+  box.innerHTML = '<div class="loading"><span class="spinner"></span> Loading totals</div>';
+  const params = new URLSearchParams({
+    from: document.querySelector('#analytics-from').value,
+    to: document.querySelector('#analytics-to').value,
+    groupBy: document.querySelector('#analytics-group').value,
+  });
+  try {
+    const report = await api(`/admin/analytics?${params}`), rows = report.rows;
+    if (!rows.length) {
+      box.innerHTML = '<div class="empty">No print activity in this date range.</div>';
+      document.querySelector('#analytics-csv').disabled = true;
+      return;
+    }
+    const totals = rows.reduce((sum, row) => {
+      for (const key of ['orders', 'pages', 'revenue', 'online', 'cash', 'payment_pending', 'print_failures']) sum[key] += Number(row[key] || 0);
+      return sum;
+    }, { orders: 0, pages: 0, revenue: 0, online: 0, cash: 0, payment_pending: 0, print_failures: 0 });
+    const grouping = report.groupBy === 'month' ? 'MONTH' : 'DAY';
+    const max = Math.max(1, ...rows.map((row) => Number(row.orders)));
+    box.innerHTML = `<div class="stats-grid">${statCard('ORDERS', totals.orders, 'Selected range')}${statCard('PAGES', totals.pages, 'Billable pages')}${statCard('VERIFIED REVENUE', money(totals.revenue), `UPI ${money(totals.online)} · Cash ${money(totals.cash)}`)}${statCard('NEEDS ATTENTION', totals.payment_pending + totals.print_failures, `${totals.payment_pending} payment pending · ${totals.print_failures} print failures`)}</div><div class="metric-chart">${rows.map((row) => `<div class="bar-col"><div class="bar" title="${date(row.activity_date)} · ${row.orders} orders · ${money(row.revenue)}" style="height:${Math.max(3, Number(row.orders) / max * 125)}px"></div><span class="bar-label">${date(row.activity_date)}</span></div>`).join('')}</div><div class="table-scroll"><table><thead><tr><th>${grouping}</th><th>ORDERS</th><th>PAGES</th><th>VERIFIED REVENUE</th><th>UPI</th><th>CASH</th><th>PAYMENT PENDING</th><th>PRINT FAILURES</th></tr></thead><tbody>${rows.map((row) => `<tr><td>${date(row.activity_date)}</td><td>${row.orders}</td><td>${row.pages}</td><td>${money(row.revenue)}</td><td>${money(row.online)}</td><td>${money(row.cash)}</td><td>${row.payment_pending}</td><td>${row.print_failures}</td></tr>`).join('')}</tbody></table></div><p class="field-hint">${report.timeZone} · ${report.from} to ${report.to}</p>`;
+    const csvButton = document.querySelector('#analytics-csv');
+    csvButton.disabled = false;
+    csvButton.onclick = () => reportCsv(`print-wallah-shop-${report.from}-${report.to}.csv`, [grouping, 'Orders', 'Pages', 'Verified revenue', 'UPI', 'Cash', 'Payment pending', 'Print failures'], rows.map((row) => [row.activity_date, row.orders, row.pages, row.revenue, row.online, row.cash, row.payment_pending, row.print_failures]));
+  } catch (error) {
+    box.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+    document.querySelector('#analytics-csv').disabled = true;
+  }
+}
 function settingsForm(s) { return `<div class="order-layout"><section class="panel"><div class="panel-head"><div><h3>Shop and price card</h3><div class="subtext">Changes apply to new orders.</div></div></div><div class="modal-inner"><form id="settings-form-admin"><div class="form-grid"><div class="field"><label>Shop phone</label><input name="phone" value="${esc(s.phone)}"></div><div class="field"><label>Printer name</label><input name="agentName" value="${esc(s.agentName || '')}"></div><div class="field full"><label>Shop address</label><input name="address" value="${esc(s.address)}"></div></div>${printConfigFields(s.printConfig)}<div class="config-section"><h3>Price card · ₹ / printed sheet</h3><div class="form-grid">${Object.entries({ bw_a4: 'B&W · A4', color_a4: 'Color · A4', bw_a3: 'B&W · A3', color_a3: 'Color · A3', glossy_a4: 'Glossy · A4', photo_sheet: 'Photo sheet' }).map(([key, label]) => priceField(key, label, s.pricing[key] ?? 0)).join('')}${optionalPriceField('glossy_a3', 'Glossy · A3', s.pricing.glossy_a3)}${optionalPriceField('photo_sheet_a3', 'Photo sheet · A3', s.pricing.photo_sheet_a3)}</div></div><div class="form-actions"><button class="button button-primary">Save shop settings</button></div><div class="form-error" id="settings-error"></div></form></div></section><section class="panel"><div class="panel-head"><div><h3>Local print agent</h3><div class="subtext">Connect this shop computer to the approved print queue.</div></div></div><div class="modal-inner"><div class="detail-stat"><span class="stat-label">LAST HEARTBEAT</span><strong>${s.agentLastSeen ? dateTime(s.agentLastSeen) : 'Not connected'}</strong></div><p class="field-hint" style="margin-top:15px">The agent checks for approved orders and reports print results. Keep its token private.</p><button class="button button-light button-small" id="rotate-agent">Rotate agent token</button><a class="text-button" href="/docs/PRINT_AGENT.md" target="_blank">Setup guide ↗</a></div></section></div>`; }
 async function saveShopSettings(e) { e.preventDefault(); const form = e.currentTarget, button = form.querySelector('button[type="submit"]'), label = button.textContent, error = document.querySelector('#settings-error'); const b = Object.fromEntries(new FormData(form)); b.pricing = Object.fromEntries(['bw_a4', 'color_a4', 'bw_a3', 'color_a3', 'glossy_a4', 'photo_sheet', 'glossy_a3', 'photo_sheet_a3'].filter(k => !((k === 'glossy_a3' || k === 'photo_sheet_a3') && String(b[k] ?? '') === '')).map(k => [k, Number(b[k] ?? shop.pricing[k])])); b.printConfig = readPrintConfig(form); error.textContent = ''; button.disabled = true; button.innerHTML = '<span class="spinner" aria-hidden="true"></span> Saving settings'; try { const result = await api('/admin/settings', { method: 'PATCH', body: JSON.stringify(b) }); shop = result.shop; const title = document.querySelector('#app > .section-heading h1'), city = document.querySelector('#app > .section-heading .eyebrow'); if (title) title.textContent = shop.name; if (city) city.textContent = shop.city || 'Shop workspace'; toast('Shop settings saved.'); renderAdminTab(); } catch (err) { error.textContent = err.message; button.disabled = false; button.textContent = label; } }
 async function rotateAgent() { if (!confirm('Rotate this agent token? The running agent will stop connecting until its configuration is updated.')) return; try { const result = await api('/admin/agent/rotate', { method: 'POST', body: '{}' }); showModal(`<div class="eyebrow">NEW AGENT TOKEN</div><h2>Update the shop computer now.</h2><p class="lede">The previous token stopped working when this one was created.</p><div class="url-box">${esc(result.agentToken)}</div><button class="button button-primary" id="copy-new-token">Copy token</button>`); document.querySelector('#copy-new-token').onclick = () => copyText(result.agentToken); } catch (e) { toast(e.message); } }

@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 const pdfParse = require('pdf-parse');
 const QRCode = require('qrcode');
 const PDFDocument = require('pdfkit');
+const { createDocumentBundle } = require('../services/documentBundle');
 const { pool } = require('../db');
 const { issue, authenticate, role } = require('../middleware/auth');
 const { OPTIONAL_PRICING_KEYS, DEFAULT_PRICING, DEFAULT_PRINT_CONFIG, isActive, statusOf, calculatePrice, publicId, orderCode, token, sha256 } = require('../services/core');
@@ -14,9 +15,13 @@ const { audit } = require('../services/audit');
 const { isValidUpiId, normalizeUpiId, buildUpiUri, upiQr } = require('../services/upi');
 const { webhookEnabled, verifySignature } = require('../services/webhook');
 const { baseUrl } = require('../services/network');
+const { parseAnalyticsRange, queryPlatformAnalytics, queryShopAnalytics } = require('../services/reports');
+const { hasPersistentUploadDirectory } = require('../services/storagePolicy');
 
 const router = express.Router();
 const uploadDir = path.resolve(process.env.UPLOAD_DIR || './storage');
+const MAX_DOCUMENT_BUNDLE_FILES = 10;
+const MAX_DOCUMENT_BUNDLE_BYTES = 100 * 1024 * 1024;
 fs.mkdirSync(uploadDir, { recursive: true });
 const upload = multer({
   storage: multer.diskStorage({ destination: uploadDir, filename: (_req, file, cb) => cb(null, `${crypto.randomUUID()}${path.extname(file.originalname).toLowerCase()}`) }),
@@ -115,6 +120,21 @@ router.get('/super/overview', ...owner, asyncRoute(async (_req, res) => {
     FROM orders`);
   const { rows: recent } = await pool.query(`SELECT o.order_code,o.amount,o.order_status,o.created_at,s.name shop_name FROM orders o JOIN shops s ON s.id=o.shop_id ORDER BY o.created_at DESC LIMIT 8`);
   res.json({ shops: rows[0], orders: orders[0], recent });
+}));
+router.get('/super/analytics', ...owner, asyncRoute(async (req, res) => {
+  const range = parseAnalyticsRange(req.query);
+  const shops = await queryPlatformAnalytics(pool, range);
+  res.json({ groupBy: range.groupBy, timeZone: range.timeZone, from: range.from, to: range.to, shops });
+}));
+router.get('/admin/analytics', ...admin, asyncRoute(async (req, res) => {
+  const range = parseAnalyticsRange(req.query);
+  const rows = await queryShopAnalytics(pool, req.user.shopId, range);
+  res.json({ groupBy: range.groupBy, timeZone: range.timeZone, from: range.from, to: range.to, rows });
+}));
+router.get('/super/analytics', ...owner, asyncRoute(async (req, res) => {
+  const range = parseAnalyticsRange(req.query);
+  const shops = await queryPlatformAnalytics(pool, range);
+  res.json({ groupBy: range.groupBy, timeZone: range.timeZone, from: range.from, to: range.to, shops });
 }));
 router.get('/super/shops', ...owner, asyncRoute(async (req, res) => {
   const search = `%${String(req.query.q || '').trim()}%`;
@@ -233,7 +253,10 @@ router.get('/shops/:shopId/public', asyncRoute(async (req, res) => {
   if (!isActive(shop)) return res.status(423).json({ error: `${shop.name} is currently ${statusOf(shop)} and cannot accept orders`, status: statusOf(shop) });
   res.json({ shop: publicShopView(shop) });
 }));
-router.post('/shops/:shopId/uploads', upload.single('document'), asyncRoute(async (req, res) => {
+router.post('/shops/:shopId/uploads', (req, res, next) => {
+  if (!hasPersistentUploadDirectory()) return res.status(503).json({ error: 'Persistent upload storage is not configured. Set UPLOAD_DIR to the mounted disk path.' });
+  return next();
+}, upload.single('document'), asyncRoute(async (req, res) => {
   const drop = () => { if (req.file) fs.rmSync(req.file.path, { force: true }); };
   const shop = await findShop(req.params.shopId); if (!shop) { drop(); return res.status(404).json({ error: 'Shop portal not found' }); }
   if (!isActive(shop)) { drop(); return res.status(423).json({ error: `Shop is ${statusOf(shop)}` }); }
@@ -287,18 +310,28 @@ router.post('/shops/:shopId/orders', asyncRoute(async (req, res) => {
   if (b.expectedAmount !== undefined && b.expectedAmount !== null && Math.round(Number(b.expectedAmount) * 100) !== Math.round(quote.total * 100)) return res.status(409).json({ error: `The shop's price changed. The new total is \u20B9${quote.total.toFixed(2)}. Please review it and try again.`, code: 'PRICE_CHANGED', currentAmount: quote.total });
   const code = orderCode();
   const orderStatus = b.paymentMethod === 'cash' ? 'cash_confirmation_pending' : 'pending_payment';
-  const printFileName = config.mode === 'photo' ? `${crypto.randomUUID()}-photo-sheet.pdf` : null;
-  if (printFileName) try { await createPhotoPrintFile(items, path.join(uploadDir, printFileName), config); }
-    catch (e) { console.error('Photo sheet preparation failed:', e.message); return res.status(400).json({ error: 'Could not prepare these photos for a photo sheet. Try different JPG or PNG files.' }); }
+  const documentBundle = config.mode !== 'photo' && items.length > 1;
+  const printFileName = config.mode === 'photo' || documentBundle ? `${crypto.randomUUID()}-${documentBundle ? 'document-bundle' : 'photo-sheet'}.pdf` : null;
+  if (printFileName) {
+    try {
+      const outputPath = path.join(uploadDir, printFileName);
+      if (documentBundle) await createDocumentBundle(items, outputPath, config, uploadDir);
+      else await createPhotoPrintFile(items, outputPath, config);
+    } catch (e) {
+      console.error('Printable PDF preparation failed:', e.message);
+      fs.rmSync(path.join(uploadDir, printFileName), { force: true });
+      return res.status(400).json({ error: documentBundle ? 'Could not combine these files into one print document.' : 'Could not prepare these photos for a photo sheet. Try different JPG or PNG files.' });
+    }
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    if (items.length > 1) { const { rows: taken } = await client.query('SELECT 1 FROM order_uploads WHERE upload_id = ANY($1) UNION SELECT 1 FROM orders WHERE upload_id = ANY($1)', [items.map((x) => x.upload.id)]); if (taken.length) throw Object.assign(new Error('One of these photos is already part of another order. Upload it again.'), { status: 409 }); }
+    if (items.length > 1) { const { rows: taken } = await client.query('SELECT 1 FROM order_uploads WHERE upload_id = ANY($1) UNION SELECT 1 FROM orders WHERE upload_id = ANY($1)', [items.map((x) => x.upload.id)]); if (taken.length) throw Object.assign(new Error('One of these uploads is already part of another order. Upload the files again.'), { status: 409 }); }
     const { rows } = await client.query(`INSERT INTO orders(order_code,shop_id,upload_id,print_file_name,customer_name,customer_phone,config,page_count,copies,amount,payment_method,payment_status,order_status,print_status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',$12,'not_ready') RETURNING *`,
       [code, shop.id, file.id, printFileName, String(b.customerName || '').slice(0, 100) || null, String(b.customerPhone || '').slice(0, 40) || null,
-        { ...config, sourcePageCount: file.page_count, printPageCount: config.mode === 'photo' ? config.photoSheets : file.page_count, fileName: config.mode === 'photo' && items.length > 1 ? `${items.length} photos` : file.original_name, billablePages: quote.printablePages * config.copies, priceBreakdown: quote },
+        { ...config, sourcePageCount: pages, printPageCount: config.mode === 'photo' ? config.photoSheets : pages, fileName: config.mode === 'photo' ? `${items.length} photos` : documentBundle ? `${items.length} files` : file.original_name, documentFiles: documentBundle ? items.map((item) => item.upload.original_name) : undefined, billablePages: quote.printablePages * config.copies, priceBreakdown: quote },
         pages, config.copies, quote.total, b.paymentMethod, orderStatus]);
-    if (config.mode === 'photo') for (const [i, item] of items.entries()) await client.query('INSERT INTO order_uploads(order_id,upload_id,quantity,position) VALUES($1,$2,$3,$4)', [rows[0].id, item.upload.id, item.quantity, i]);
+    if (config.mode === 'photo' || documentBundle) for (const [i, item] of items.entries()) await client.query('INSERT INTO order_uploads(order_id,upload_id,quantity,position) VALUES($1,$2,$3,$4)', [rows[0].id, item.upload.id, item.quantity, i]);
     if (b.paymentMethod === 'upi') await client.query('INSERT INTO payments(order_id,shop_id,amount) VALUES($1,$2,$3)', [rows[0].id, shop.id, quote.total]);
     await client.query('INSERT INTO audit_log(shop_id,actor,action,details) VALUES($1,$2,$3,$4)', [shop.id, 'customer', 'order.created', { orderCode: code, paymentMethod: b.paymentMethod, amount: quote.total }]);
     await client.query('COMMIT');
@@ -416,14 +449,80 @@ router.post('/admin/orders/:orderId/cancel', ...admin, asyncRoute(async (req, re
 router.post('/admin/orders/:orderId/print-failed', ...admin, asyncRoute(async (req, res) => transitionOrder(req, res, 'print-failed')));
 router.post('/admin/orders/:orderId/retry-print', ...admin, asyncRoute(async (req, res) => transitionOrder(req, res, 'retry-print')));
 router.post('/admin/orders/:orderId/complete', ...admin, asyncRoute(async (req, res) => transitionOrder(req, res, 'complete')));
-router.get('/admin/analytics', ...admin, asyncRoute(async (req, res) => { const from = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 30 * 86400000); const to = req.query.to ? new Date(req.query.to) : new Date(); if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime())) return res.status(400).json({ error: 'Invalid date range' }); const { rows } = await pool.query(`SELECT date_trunc('day',created_at)::date activity_date,count(*)::int orders,coalesce(sum((config->>'billablePages')::int),0)::int pages,coalesce(sum(amount) FILTER(WHERE order_status IN ('print_queued','printing','completed')),0)::numeric(12,2) revenue,coalesce(sum(amount) FILTER(WHERE payment_method='upi' AND payment_status='verified'),0)::numeric(12,2) online,coalesce(sum(amount) FILTER(WHERE payment_method='cash' AND order_status IN ('print_queued','printing','completed')),0)::numeric(12,2) cash FROM orders WHERE shop_id=$1 AND created_at >= $2::date AND created_at < ($3::date + interval '1 day') GROUP BY 1 ORDER BY 1`, [req.user.shopId, from, to]); res.json(rows); }));
+router.get('/admin/analytics', ...admin, asyncRoute(async (req, res) => {
+  const range = parseAnalyticsRange(req.query);
+  const rows = await queryShopAnalytics(pool, req.user.shopId, range);
+  res.json({ groupBy: range.groupBy, timeZone: range.timeZone, from: range.from, to: range.to, rows });
+}));
 router.patch('/admin/settings', ...admin, asyncRoute(async (req, res) => { const b = req.body; const { rows } = await pool.query('SELECT * FROM shops WHERE id=$1', [req.user.shopId]); const shop = rows[0]; const pc = b.printConfig ? validatePrintConfig(b.printConfig) : shop.print_config; const pricing = b.pricing ? validatePricing(b.pricing) : shop.pricing; const upiId = 'upiId' in b ? normalizeUpiId(b.upiId) : shop.upi_id; if (upiId && !isValidUpiId(upiId)) return res.status(400).json({ error: 'Enter a valid UPI ID such as shopname@bank' }); const upiName = 'upiName' in b ? (String(b.upiName || '').trim().slice(0, 60) || null) : shop.upi_name; const { rows: updated } = await pool.query('UPDATE shops SET name=$2,owner_name=$3,phone=$4,email=$5,address=$6,city=$7,upi_id=$8,upi_name=$9,pricing=$10,print_config=$11,agent_name=$12 WHERE id=$1 RETURNING *', [shop.id, b.name ?? shop.name, b.ownerName ?? shop.owner_name, b.phone ?? shop.phone, b.email ?? shop.email, b.address ?? shop.address, b.city ?? shop.city, upiId, upiName, pricing, pc, b.agentName ?? shop.agent_name]); await audit(shop.id, req.user.email, 'shop.settings.updated', { fields: Object.keys(b) }); res.json({ shop: safeShop(updated[0]) }); }));
 router.post('/admin/agent/rotate', ...admin, asyncRoute(async (req, res) => { const value = token(); await pool.query('UPDATE shops SET agent_token_hash=$2 WHERE id=$1', [req.user.shopId, sha256(value)]); res.json({ agentToken: value }); }));
 router.get('/admin/uploads/:orderId', ...admin, asyncRoute(async (req, res) => { const { rows } = await pool.query(`SELECT u.stored_name,u.original_name,o.print_file_name FROM uploads u JOIN orders o ON o.upload_id=u.id WHERE o.id=$1 AND o.shop_id=$2`, [req.params.orderId, req.user.shopId]); if (!rows[0]) return res.status(404).json({ error: 'Document not found' }); const file = rows[0].print_file_name || rows[0].stored_name; const target = path.join(uploadDir, path.basename(file)); if (!fs.existsSync(target)) return res.status(410).json({ error: 'This file is no longer stored on the server' }); res.download(target, rows[0].print_file_name ? `photo-sheet-${req.params.orderId.slice(0, 8)}.pdf` : rows[0].original_name); }));
 
 // Local print-agent API. A claim creates a lease and is atomic across agents.
 router.post('/agent/:shopId/heartbeat', asyncRoute(async (req, res) => { const shop = await agentShop(req); if (!shop) return res.status(401).json({ error: 'Invalid print-agent token' }); await pool.query('UPDATE shops SET agent_name=$2,agent_last_seen=now() WHERE id=$1', [shop.id, String(req.body.agentName || 'Print agent').slice(0, 100)]); res.json({ ok: true, serverTime: new Date().toISOString() }); }));
-router.get('/agent/:shopId/jobs', asyncRoute(async (req, res) => { const shop = await agentShop(req); if (!shop) return res.status(401).json({ error: 'Invalid print-agent token' }); if (!isActive(shop)) return res.json({ job: null, locked: true, shopStatus: statusOf(shop) }); const client = await pool.connect(); try { await client.query('BEGIN'); const stale = await client.query(`UPDATE print_jobs SET status=CASE WHEN attempts>=5 THEN 'failed' ELSE 'queued' END,claimed_by=NULL,error_message=CASE WHEN attempts>=5 THEN 'The print agent did not finish this job after 5 attempts' ELSE error_message END WHERE shop_id=$1 AND status='claimed' AND claimed_at<now()-interval '15 minutes' RETURNING order_id,status`, [shop.id]); for (const row of stale.rows) await client.query(`UPDATE orders SET print_status=$2,order_status=$3 WHERE id=$1`, [row.order_id, row.status, row.status === 'failed' ? 'failed' : 'print_queued']); const { rows } = await client.query(`SELECT j.id job_id,o.id order_id,o.order_code,o.config,o.page_count,CASE WHEN o.print_file_name IS NOT NULL THEN 1 ELSE o.copies END copies,o.amount,COALESCE(o.print_file_name,u.stored_name) stored_name,CASE WHEN o.print_file_name IS NOT NULL THEN 'application/pdf' ELSE u.mime_type END mime_type,u.byte_size,COALESCE(o.print_file_name,u.original_name) original_name FROM print_jobs j JOIN orders o ON o.id=j.order_id JOIN uploads u ON u.id=o.upload_id WHERE j.shop_id=$1 AND j.status='queued' AND j.attempts<5 AND o.order_status='print_queued' AND o.payment_status='verified' ORDER BY j.created_at FOR UPDATE OF j SKIP LOCKED LIMIT 1`, [shop.id]); if (!rows[0]) { await client.query('COMMIT'); return res.json({ job: null }); } await client.query(`UPDATE print_jobs SET status='claimed',claimed_by='print-agent',claimed_at=now(),attempts=attempts+1 WHERE id=$1`, [rows[0].job_id]); await client.query(`UPDATE orders SET print_status='claimed',order_status='printing' WHERE id=$1`, [rows[0].order_id]); await client.query('COMMIT'); res.json({ job: { ...rows[0], downloadUrl: `/api/agent/${shop.public_id}/jobs/${rows[0].job_id}/document` } }); } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); } }));
+router.get('/agent/:shopId/jobs', asyncRoute(async (req, res) => {
+  const shop = await agentShop(req);
+  if (!shop) return res.status(401).json({ error: 'Invalid print-agent token' });
+  if (!isActive(shop)) return res.json({ job: null, locked: true, shopStatus: statusOf(shop) });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const stale = await client.query(
+      `UPDATE print_jobs
+       SET status = CASE WHEN attempts >= 5 THEN 'failed' ELSE 'queued' END,
+           claimed_by = NULL,
+           error_message = CASE WHEN attempts >= 5 THEN 'The print agent did not finish this job after 5 attempts' ELSE error_message END
+       WHERE shop_id = $1 AND status = 'claimed' AND claimed_at < now() - interval '15 minutes'
+       RETURNING order_id, status`,
+      [shop.id],
+    );
+    for (const row of stale.rows) {
+      await client.query(
+        'UPDATE orders SET print_status = $2, order_status = $3 WHERE id = $1',
+        [row.order_id, row.status, row.status === 'failed' ? 'failed' : 'print_queued'],
+      );
+    }
+
+    const { rows } = await client.query(
+      `SELECT j.id job_id, o.id order_id, o.order_code, o.config, o.page_count,
+              CASE WHEN o.config->>'mode' = 'photo' THEN 1 ELSE o.copies END copies,
+              o.amount, COALESCE(o.print_file_name, u.stored_name) stored_name,
+              CASE WHEN o.print_file_name IS NOT NULL THEN 'application/pdf' ELSE u.mime_type END mime_type,
+              u.byte_size, COALESCE(o.print_file_name, u.original_name) original_name
+       FROM print_jobs j
+       JOIN orders o ON o.id = j.order_id
+       JOIN uploads u ON u.id = o.upload_id
+       WHERE j.shop_id = $1 AND j.status = 'queued' AND j.attempts < 5
+         AND o.order_status = 'print_queued' AND o.payment_status = 'verified'
+       ORDER BY j.created_at
+       FOR UPDATE OF j SKIP LOCKED
+       LIMIT 1`,
+      [shop.id],
+    );
+    if (!rows[0]) {
+      await client.query('COMMIT');
+      return res.json({ job: null });
+    }
+
+    await client.query(
+      `UPDATE print_jobs SET status = 'claimed', claimed_by = 'print-agent',
+       claimed_at = now(), attempts = attempts + 1 WHERE id = $1`,
+      [rows[0].job_id],
+    );
+    await client.query(
+      `UPDATE orders SET print_status = 'claimed', order_status = 'printing' WHERE id = $1`,
+      [rows[0].order_id],
+    );
+    await client.query('COMMIT');
+    return res.json({ job: { ...rows[0], downloadUrl: `/api/agent/${shop.public_id}/jobs/${rows[0].job_id}/document` } });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
 router.get('/agent/:shopId/jobs/:jobId/document', asyncRoute(async (req, res) => { const shop = await agentShop(req); if (!shop) return res.status(401).json({ error: 'Invalid print-agent token' }); const { rows } = await pool.query(`SELECT COALESCE(o.print_file_name,u.stored_name) stored_name,COALESCE(o.print_file_name,u.original_name) original_name FROM print_jobs j JOIN orders o ON o.id=j.order_id JOIN uploads u ON u.id=o.upload_id WHERE j.id=$1 AND j.shop_id=$2 AND j.claimed_by='print-agent' AND j.status IN ('claimed','printing')`, [req.params.jobId, shop.id]); if (!rows[0]) return res.status(404).json({ error: 'Claimed job not found' }); res.download(path.join(uploadDir, rows[0].stored_name), rows[0].original_name); }));
 router.post('/agent/:shopId/jobs/:jobId/result', asyncRoute(async (req, res) => { const shop = await agentShop(req); if (!shop) return res.status(401).json({ error: 'Invalid print-agent token' }); const status = req.body.status; if (!['completed', 'failed'].includes(status)) return res.status(400).json({ error: 'Result must be completed or failed' }); const client = await pool.connect(); try { await client.query('BEGIN'); const { rows } = await client.query(`SELECT j.*,o.id order_id FROM print_jobs j JOIN orders o ON o.id=j.order_id WHERE j.id=$1 AND j.shop_id=$2 AND j.claimed_by='print-agent' AND j.status='claimed' FOR UPDATE OF j`, [req.params.jobId, shop.id]); if (!rows[0]) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Job lease is no longer active' }); } const errorMessage = status === 'failed' ? String(req.body.error || 'Printer command failed').slice(0, 1000) : null; await client.query('UPDATE print_jobs SET status=$2,error_message=$3 WHERE id=$1', [rows[0].id, status, errorMessage]); await client.query('UPDATE orders SET print_status=$2,order_status=$3,completed_at=CASE WHEN $2=\'completed\' THEN now() ELSE completed_at END WHERE id=$1', [rows[0].order_id, status, status === 'completed' ? 'completed' : 'failed']); await client.query('COMMIT'); res.json({ ok: true }); } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); } }));
 
@@ -440,6 +539,7 @@ async function transitionOrder(req, res, action) {
     } else if (action === 'cancel') {
       if (['completed', 'printing', 'cancelled'].includes(order.order_status)) throw Object.assign(new Error('This order cannot be cancelled in its current state'), { status: 409 }); await client.query(`DELETE FROM print_jobs WHERE order_id=$1 AND status='queued'`, [id]); await client.query(`UPDATE orders SET print_status='not_ready',order_status='cancelled',payment_status=CASE WHEN payment_status='pending' THEN 'cancelled' ELSE payment_status END WHERE id=$1`, [id]); await client.query(`UPDATE payments SET status='cancelled' WHERE order_id=$1 AND status='pending'`, [id]);
     } else if (action === 'print-failed') {
+      if (order.files_deleted_at) throw Object.assign(new Error('Print files were deleted after the 10-minute retention period and cannot be retried'), { status: 409 });
       if (!['claimed', 'printing', 'failed', 'completed'].includes(order.print_status)) throw Object.assign(new Error('Only jobs that are printing, failed or completed can be marked failed'), { status: 409 }); await client.query(`UPDATE print_jobs SET status='failed',error_message=$2 WHERE order_id=$1`, [id, String(req.body.reason || 'Marked failed by shop admin').slice(0, 1000)]); await client.query(`UPDATE orders SET order_status='failed',print_status='failed' WHERE id=$1`, [id]);
     } else if (action === 'retry-print') {
       if (order.order_status !== 'failed' || order.payment_status !== 'verified') throw Object.assign(new Error('Only paid, failed orders can be requeued'), { status: 409 }); await client.query(`INSERT INTO print_jobs(order_id,shop_id,status) VALUES($1,$2,'queued') ON CONFLICT(order_id) DO UPDATE SET id=gen_random_uuid(),status='queued',attempts=0,error_message=NULL,claimed_by=NULL,claimed_at=NULL,updated_at=now()`, [id, shopId]); await client.query(`UPDATE orders SET order_status='print_queued',print_status='queued' WHERE id=$1`, [id]);
@@ -537,9 +637,31 @@ function pageCount(config, total) {
 
 // Resolves everything a quote or an order needs from the browser's request, always using the shop's own data and the stored upload.
 async function prepareOrder(shop, body, { forQuote = false } = {}) {
-  const { rows: files } = await pool.query(`SELECT * FROM uploads WHERE public_token=$1 AND shop_id=$2 AND expires_at>now()`, [String(body.uploadToken || ''), shop.id]);
-  const file = files[0];
-  if (!file) throw Object.assign(new Error('Upload has expired or does not belong to this shop. Upload it again.'), { status: 400 });
+  const documentTokens = body.documentTokens === undefined ? [body.uploadToken] : body.documentTokens;
+  if (!Array.isArray(documentTokens) || documentTokens.length < 1 || documentTokens.length > MAX_DOCUMENT_BUNDLE_FILES ||
+    documentTokens.some((item) => typeof item !== 'string' || !item.trim()) ||
+    new Set(documentTokens).size !== documentTokens.length || documentTokens[0] !== body.uploadToken) {
+    throw Object.assign(new Error(`Choose 1 to ${MAX_DOCUMENT_BUNDLE_FILES} different uploaded documents and keep the first upload selected`), { status: 400 });
+  }
+  if (documentTokens.length > 1 && body.config?.mode === 'photo') {
+    throw Object.assign(new Error('Use Photo sheet mode for multiple photos, or Document mode for a file bundle'), { status: 400 });
+  }
+  if (documentTokens.length > 1 && body.config?.pageRange && body.config.pageRange !== 'all') {
+    throw Object.assign(new Error('A document bundle prints all pages. Upload a single PDF to select a page range.'), { status: 400 });
+  }
+  const { rows: uploadedFiles } = await pool.query(
+    `SELECT * FROM uploads WHERE public_token = ANY($1::text[]) AND shop_id=$2 AND expires_at>now()`,
+    [documentTokens, shop.id],
+  );
+  const filesByToken = new Map(uploadedFiles.map((item) => [item.public_token, item]));
+  const documents = documentTokens.map((uploadToken) => filesByToken.get(uploadToken)).filter(Boolean);
+  if (documents.length !== documentTokens.length) {
+    throw Object.assign(new Error('One or more uploads expired or do not belong to this shop. Upload them again.'), { status: 400 });
+  }
+  if (documents.length > 1 && documents.reduce((total, item) => total + Number(item.byte_size), 0) > MAX_DOCUMENT_BUNDLE_BYTES) {
+    throw Object.assign(new Error('The combined documents exceed the 100 MB order limit'), { status: 400 });
+  }
+  const file = documents[0];
   const config = validatePrintOptions(body.config, shop, file);
   let items = [{ upload: file, quantity: config.photoQuantity }];
   if (config.mode === 'photo') {
@@ -560,8 +682,14 @@ async function prepareOrder(shop, body, { forQuote = false } = {}) {
     config.photoSheets = Math.ceil(config.photoQuantity / config.photoCapacity);
     config.copies = config.photoSheets;
     config.photoLayout = items.map((x, i) => ({ name: x.upload.original_name, quantity: x.quantity, edit: summarizeEdit(requested[i]?.edit) }));
+  } else if (documents.length > 1) {
+    items = documents.map((upload) => ({ upload, quantity: 1 }));
+    config.pageRange = 'all';
+    config.imageEdit = null;
+    config.documentFiles = documents.map((item) => item.original_name);
   }
-  const pages = config.mode === 'photo' ? 1 : pageCount(config, file.page_count);
+  const pages = config.mode === 'photo' ? 1 : documents.length > 1 ? documents.reduce((sum, item) => sum + Number(item.page_count), 0) : pageCount(config, file.page_count);
+  if (pages > 2000) throw Object.assign(new Error('A combined order cannot exceed 2000 printable pages'), { status: 400 });
   let quote;
   try { quote = calculatePrice({ pricing: json(shop.pricing), pages, copies: config.copies, color: config.color, paperSize: config.paperSize, paperType: config.paperType, duplex: config.duplex, photoSheets: config.photoSheets }); }
   catch (e) { throw Object.assign(new Error(e.message), { status: 400 }); }

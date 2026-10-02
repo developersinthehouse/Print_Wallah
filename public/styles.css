@@ -1241,6 +1241,13 @@ tbody tr:hover td {
   height: 34px
 }
 
+.retention-note {
+  margin: 0 0 var(--s-4);
+  color: var(--muted);
+  font-size: .8rem;
+  line-height: 1.5
+}
+
 .resume-banner {
   display: flex;
   align-items: center;
