@@ -1,6 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { PDFDocument } = require('pdf-lib');
+const { isSafeStoredFilename } = require('./storagePolicy');
 
 const PAPER_POINTS = {
   A4: [595.28, 841.89],
@@ -57,7 +58,7 @@ async function createDocumentBundle(items, outputPath, config, uploadDir) {
 
   for (const item of items) {
     const storedName = item.upload?.stored_name;
-    if (typeof storedName !== 'string' || path.basename(storedName) !== storedName) {
+    if (!isSafeStoredFilename(storedName)) {
       throw new Error('Uploaded document has an invalid stored filename');
     }
     const filePath = path.join(uploadDir, storedName);

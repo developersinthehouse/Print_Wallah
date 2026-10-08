@@ -13,10 +13,7 @@
   <link rel="preload" href="/vendor/fonts/plus-jakarta-sans-latin-wght-normal.woff2" as="font" type="font/woff2"
     crossorigin>
   <link rel="stylesheet" href="/styles.css">
-  <script src="/vendor/pdfjs/pdf.min.js" defer></script>
   <script src="/icons.js" defer></script>
-  <script src="/photoedit.js" defer></script>
-  <script src="/customer.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 
@@ -24,29 +21,21 @@
   <div class="site-shell">
     <header class="nav-wrap">
       <nav class="nav" aria-label="Main">
-        <a class="brand" id="brand-link" href="/" aria-label="Print Wallah home"><img id="brand-logo" class="brand-logo"
-            src="/assets/logo.png" alt="Print Wallah"></a>
-        <div class="nav-actions"><span id="nav-context" class="nav-actions"></span><button
+        <a class="brand" id="brand-link" href="/" aria-label="Print Wallah home"><img id="brand-logo"
+            class="brand-logo" src="/assets/Print-Wallah_wordmark.png" alt="Print Wallah"><span
+            class="brand-mobile"><img src="/assets/Print-Wallah_icon.png" alt="Print Wallah"></span></a>
+        <div class="nav-actions"><div class="login-nav-context" aria-label="Admin console"><span>ADMIN CONSOLE</span><span>Shops · Orders · Print queue</span></div><span id="nav-context" class="nav-actions"></span><button
             class="button button-quiet hidden" id="logout-button" type="button">Sign out</button></div>
       </nav>
     </header>
     <main id="app" aria-live="polite">
       <div class="loading"><span class="spinner"></span> Loading</div>
     </main>
-    <footer class="site-footer" id="site-footer"><span>&copy; Print Wallah</span><span>Made by DEVELOPERS · <a
-          href="https://example.com/replace-official-site-url" target="_blank"
-          rel="noopener">thedevelopers.co.in</a></span>
-      <nav class="social-links" aria-label="DEVELOPERS social links"><a href="https://example.com/replace-instagram-url"
-          aria-label="Instagram" title="Instagram">IG</a><a href="https://example.com/replace-x-url"
-          aria-label="Twitter or X" title="Twitter or X">X</a><a href="https://example.com/replace-linkedin-url"
-          aria-label="LinkedIn" title="LinkedIn">in</a><a href="https://example.com/replace-whatsapp-url"
-          aria-label="WhatsApp" title="WhatsApp">WA</a><a href="https://example.com/replace-github-url"
-          aria-label="GitHub" title="GitHub">GH</a><a href="mailto:replace-email-address" aria-label="Email"
-          title="Email">@</a></nav>
-    </footer>
+    <footer class="site-footer" id="site-footer"></footer>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <div id="nudge" class="nudge" role="alert" aria-live="assertive"></div>
+  <dialog id="confirm" class="confirm" aria-labelledby="confirm-title"></dialog>
   <dialog id="modal" class="modal">
     <div id="modal-content"></div>
   </dialog>

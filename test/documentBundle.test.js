@@ -52,3 +52,36 @@ test('document bundle rejects path traversal filenames', async () => {
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+test('document bundle rejects empty and dot-directory stored names', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'print-wallah-bundle-'));
+  try {
+    await assert.rejects(
+      createDocumentBundle(
+        [
+          { upload: { stored_name: '', mime_type: 'application/pdf' } },
+          { upload: { stored_name: 'photo.png', mime_type: 'image/png' } },
+        ],
+        path.join(directory, 'combined.pdf'),
+        { paperSize: 'A4', orientation: 'portrait', scaling: 'fit' },
+        directory,
+      ),
+      /invalid stored filename/,
+    );
+
+    await assert.rejects(
+      createDocumentBundle(
+        [
+          { upload: { stored_name: '..', mime_type: 'application/pdf' } },
+          { upload: { stored_name: 'photo.png', mime_type: 'image/png' } },
+        ],
+        path.join(directory, 'combined.pdf'),
+        { paperSize: 'A4', orientation: 'portrait', scaling: 'fit' },
+        directory,
+      ),
+      /invalid stored filename/,
+    );
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});

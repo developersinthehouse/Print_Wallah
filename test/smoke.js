@@ -97,9 +97,9 @@ async function main() {
   assert.equal(shopSettings.shop.adminEmail, shopA.shop.adminEmail, 'Shop Settings cannot change admin credentials');
   await assert.rejects(() => adminA('/admin/settings', { method: 'PATCH', body: JSON.stringify({ upiId: 'not-a-valid-upi' }), headers: { 'Content-Type': 'application/json' } }));
   await client()('/auth/shop/login', post({ email: shopA.shop.adminEmail, password: 'shop-admin-password-123' }));
-  assert.ok(Array.isArray(await adminA('/admin/analytics?from=2026-01-01&to=2026-12-31')));
+  assert.ok(Array.isArray((await adminA('/admin/analytics?from=2026-01-01&to=2026-12-31')).rows));
   const today = new Date().toISOString().slice(0, 10);
-  const sameDayAnalytics = await adminA(`/admin/analytics?from=${today}&to=${today}`);
+  const sameDayAnalytics = (await adminA(`/admin/analytics?from=${today}&to=${today}`)).rows;
   assert.ok(sameDayAnalytics.some(row => Number(row.orders) > 0), 'analytics end date includes the entire selected day');
   const ordersA = await adminA('/admin/orders');
   assert.equal(ordersA.length, 1);
@@ -138,7 +138,7 @@ async function main() {
   assert.equal(bundleQuote.total, 24, 'shared copies and the shop rate apply to all bundle pages');
   const bundleOrder = await superAdmin(`/shops/${shopA.shop.id}/orders`, post({ uploadToken: documentTokens[0], documentTokens, paymentMethod: 'cash', config: bundleConfig, expectedAmount: bundleQuote.total }));
   assert.equal(bundleOrder.order.amount, 24);
-  assert.equal(bundleOrder.order.config.fileName, '3 files');
+  assert.equal(bundleOrder.order.fileName, '3 files');
   const bundleAdminOrder = (await adminA('/admin/orders')).find((item) => item.order_code === bundleOrder.order.code);
   assert.deepEqual(bundleAdminOrder.config.documentFiles, bundleUploads.map((item) => item.fileName));
   await adminA(`/admin/orders/${bundleAdminOrder.id}/cash-confirm`, post({}));

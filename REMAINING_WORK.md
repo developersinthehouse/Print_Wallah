@@ -161,7 +161,7 @@ Refund workflow and separate staff accounts are not selected for launch. Custome
 
 ## 8. Release verification
 
-**Status:** Core checks have been run and are recorded in [MEMORY.md](MEMORY.md). Repeat relevant checks against the final release and deployed configuration. Full browser/device and physical printer testing remains.
+**Status:** Core checks have been run and are recorded in [memory.md](memory.md). Repeat relevant checks against the final release and deployed configuration. Full browser/device and physical printer testing remains.
 
 ### Automated checks
 

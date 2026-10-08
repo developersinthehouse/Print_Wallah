@@ -1,6 +1,6 @@
 # Environment variables
 
-Copy `.env.example` to `.env` locally. On Render, add the same values under the web service's Environment settings. Keep `.env` private and never paste secrets into `MEMORY.md` or commit them.
+Copy `.env.example` to `.env` locally. On Render, add the same values under the web service's Environment settings. Keep `.env` private and never paste secrets into `memory.md` or commit them.
 
 | Variable | Required | Meaning and where to get it | Example |
 |---|---|---|---|
@@ -15,5 +15,6 @@ Copy `.env.example` to `.env` locally. On Render, add the same values under the 
 | `DEFAULT_ACCESS_DAYS` | No | Initial shop access duration. Defaults to 30 days. | `30` |
 | `UPLOAD_DIR` | No locally; required persistent path in production | Private folder for uploaded print files. On Render, set this to a mounted persistent disk path. | `./storage` |
 | `MAX_UPLOAD_MB` | No | Upload size limit. Defaults to 30 MB. | `30` |
+| `PAYMENT_WEBHOOK_SECRET` | No | Private HMAC secret (24+ random characters) for the generic payment webhook receiver. It does not connect a provider by itself; a provider-specific adapter is still required. | Set privately; see [payment setup](PAYMENTS.md) |
 
-The shop UPI ID and payee name are set per shop in the Super Admin form. There are no gateway secrets because automatic payment verification is not enabled.
+The shop UPI ID and payee name are set per shop in Super Admin or Shop Admin settings. Keep `PAYMENT_WEBHOOK_SECRET` unset until a trusted, provider-specific adapter is ready. Never put provider secrets in frontend code or share them in chat.

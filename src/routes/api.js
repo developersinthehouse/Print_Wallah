@@ -16,7 +16,7 @@ const { isValidUpiId, normalizeUpiId, buildUpiUri, upiQr } = require('../service
 const { webhookEnabled, verifySignature } = require('../services/webhook');
 const { baseUrl } = require('../services/network');
 const { parseAnalyticsRange, queryPlatformAnalytics, queryShopAnalytics } = require('../services/reports');
-const { hasPersistentUploadDirectory } = require('../services/storagePolicy');
+const { hasPersistentUploadDirectory, isSafeStoredFilename } = require('../services/storagePolicy');
 
 const router = express.Router();
 const uploadDir = path.resolve(process.env.UPLOAD_DIR || './storage');
@@ -353,7 +353,7 @@ router.get('/orders/:code/status', asyncRoute(async (req, res) => {
   const found = await loadOrderWithShop(req.params.code); if (!found) return res.status(404).json({ error: 'Order not found' });
   const { order, shop } = found;
   let ahead = null;
-  if (['print_queued', 'printing'].includes(order.order_status)) ahead = (await pool.query(`SELECT count(*)::int n FROM print_jobs j WHERE j.shop_id=$1 AND j.status IN ('queued','claimed','printing') AND j.created_at < (SELECT created_at FROM print_jobs WHERE order_id=$2)`, [order.shop_id, order.id])).rows[0].n;
+  if (['print_queued', 'printing'].includes(order.order_status)) ahead = (await pool.query(`SELECT count(*)::int n FROM print_jobs j WHERE j.shop_id=$1 AND j.status IN ('queued','claimed','printing') AND j.queue_position < (SELECT queue_position FROM print_jobs WHERE order_id=$2)`, [order.shop_id, order.id])).rows[0].n;
   res.json({ order_code: order.order_code, order_status: order.order_status, payment_status: order.payment_status, print_status: order.print_status, payment_method: order.payment_method, reference_received: order.payment_reference !== null, payment_claimed: order.payment_claimed_at !== null, amount: Number(order.amount), printer_online: agentOnline(shop), ahead, updated_at: order.updated_at });
 }));
 
@@ -407,12 +407,18 @@ router.post('/payments/webhook', asyncRoute(async (req, res) => {
   if (!webhookEnabled()) return res.status(404).json({ error: 'Not found' });
   if (!verifySignature(req.rawBody || Buffer.alloc(0), req.get('x-pw-signature'))) return res.status(401).json({ error: 'Invalid signature' });
   const e = req.body || {};
-  const eventId = String(e.eventId || '').slice(0, 200), orderCodeValue = String(e.orderCode || '').toUpperCase();
-  if (!eventId || !orderCodeValue || !['paid', 'failed'].includes(e.status)) return res.status(400).json({ error: 'eventId, orderCode and status (paid or failed) are required' });
+  const eventId = typeof e.eventId === 'string' ? e.eventId.trim() : '';
+  const orderCodeValue = typeof e.orderCode === 'string' ? e.orderCode.trim().toUpperCase() : '';
+  const providerPaymentId = e.providerPaymentId == null ? null : typeof e.providerPaymentId === 'string' ? e.providerPaymentId.trim() : '';
+  const validAmountType = typeof e.amount === 'number' || typeof e.amount === 'string' && e.amount.trim() !== '';
+  const amount = validAmountType ? Number(e.amount) : NaN;
+  if (!eventId || eventId.length > 200 || !orderCodeValue || orderCodeValue.length > 64 || !['paid', 'failed'].includes(e.status)) return res.status(400).json({ error: 'A 1-200 character eventId, orderCode and status (paid or failed) are required' });
+  if (e.providerPaymentId != null && (!providerPaymentId || providerPaymentId.length > 100)) return res.status(400).json({ error: 'providerPaymentId must be a 1-100 character string' });
+  if (e.status === 'paid' && (!validAmountType || !Number.isFinite(amount) || amount <= 0 || Math.abs(amount * 100 - Math.round(amount * 100)) > 1e-7 || String(e.currency || '').trim().toUpperCase() !== 'INR')) return res.status(400).json({ error: 'Paid events require a positive amount in INR with no more than two decimal places' });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const inserted = await client.query(`INSERT INTO payment_events(provider,event_id,order_code,payload) VALUES('webhook',$1,$2,$3) ON CONFLICT (provider,event_id) DO NOTHING RETURNING id`, [eventId, orderCodeValue, { status: e.status, amount: e.amount, currency: e.currency, providerPaymentId: e.providerPaymentId }]);
+    const inserted = await client.query(`INSERT INTO payment_events(provider,event_id,order_code,payload) VALUES('webhook',$1,$2,$3) ON CONFLICT (provider,event_id) DO NOTHING RETURNING id`, [eventId, orderCodeValue, { status: e.status, amount: e.amount, currency: e.currency, providerPaymentId }]);
     if (!inserted.rows[0]) { await client.query('ROLLBACK'); return res.json({ ok: true, duplicate: true }); }
     const setOutcome = (outcome) => client.query('UPDATE payment_events SET outcome=$2 WHERE id=$1', [inserted.rows[0].id, outcome]);
     const { rows } = await client.query('SELECT * FROM orders WHERE order_code=$1 FOR UPDATE', [orderCodeValue]);
@@ -421,7 +427,7 @@ router.post('/payments/webhook', asyncRoute(async (req, res) => {
     await client.query('UPDATE payment_events SET order_id=$2 WHERE id=$1', [inserted.rows[0].id, order.id]);
     if (order.payment_method !== 'upi') { await setOutcome('not_upi'); await client.query('COMMIT'); return res.status(409).json({ error: 'Order is not a UPI order' }); }
     if (e.status === 'failed') { await client.query(`UPDATE payments SET status='failed' WHERE order_id=$1 AND status='pending'`, [order.id]); await setOutcome('provider_failed'); await client.query('COMMIT'); return res.json({ ok: true, outcome: 'provider_failed' }); }
-    if (String(e.currency || 'INR').toUpperCase() !== 'INR' || Math.round(Number(e.amount) * 100) !== Math.round(Number(order.amount) * 100)) {
+    if (Math.round(amount * 100) !== Math.round(Number(order.amount) * 100)) {
       await setOutcome('amount_mismatch'); await client.query('INSERT INTO audit_log(shop_id,actor,action,details) VALUES($1,$2,$3,$4)', [order.shop_id, 'webhook', 'payment.amount_mismatch', { orderCode: order.order_code, expected: Number(order.amount), received: e.amount }]); await client.query('COMMIT');
       return res.status(422).json({ error: 'Amount or currency does not match the order' });
     }
@@ -430,9 +436,10 @@ router.post('/payments/webhook', asyncRoute(async (req, res) => {
       await setOutcome('needs_review'); await client.query('INSERT INTO audit_log(shop_id,actor,action,details) VALUES($1,$2,$3,$4)', [order.shop_id, 'webhook', 'payment.needs_review', { orderCode: order.order_code, orderStatus: order.order_status }]); await client.query('COMMIT');
       return res.status(202).json({ ok: true, outcome: 'needs_review' });
     }
+    await lockPrintQueue(client, order.shop_id);
     await queueForPrint(client, order);
-    await client.query(`UPDATE orders SET payment_status='verified', order_status='print_queued', print_status='queued', confirmed_at=now(), payment_reference=COALESCE(payment_reference,$2) WHERE id=$1`, [order.id, e.providerPaymentId ? String(e.providerPaymentId).slice(0, 100) : null]);
-    await client.query(`UPDATE payments SET status='verified', verified_by='webhook', reference=COALESCE($2,reference) WHERE order_id=$1`, [order.id, e.providerPaymentId ? String(e.providerPaymentId).slice(0, 100) : null]);
+    await client.query(`UPDATE orders SET payment_status='verified', order_status='print_queued', print_status='queued', confirmed_at=now(), payment_reference=COALESCE(payment_reference,$2) WHERE id=$1`, [order.id, providerPaymentId]);
+    await client.query(`UPDATE payments SET status='verified', verified_by='webhook', reference=COALESCE($2,reference) WHERE order_id=$1`, [order.id, providerPaymentId]);
     await client.query('INSERT INTO audit_log(shop_id,actor,action,details) VALUES($1,$2,$3,$4)', [order.shop_id, 'webhook', 'payment.verified', { orderCode: order.order_code }]);
     await setOutcome('verified'); await client.query('COMMIT');
     res.json({ ok: true, outcome: 'verified' });
@@ -442,7 +449,75 @@ router.post('/payments/webhook', asyncRoute(async (req, res) => {
 // Shop admin endpoints
 router.get('/admin/me', ...admin, asyncRoute(async (req, res) => { const { rows } = await pool.query('SELECT * FROM shops WHERE id=$1', [req.user.shopId]); if (!rows[0]) return res.status(401).json({ error: 'Shop account no longer exists' }); if (!isActive(rows[0])) return res.status(423).json({ error: `Shop is ${statusOf(rows[0])}` }); res.json({ shop: safeShop(rows[0]) }); }));
 router.get('/admin/overview', ...admin, asyncRoute(async (req, res) => { const shopId = req.user.shopId; const { rows } = await pool.query(`SELECT count(*) FILTER(WHERE created_at::date=current_date)::int today_orders,coalesce(sum((config->>'billablePages')::int) FILTER(WHERE created_at::date=current_date),0)::int today_pages,coalesce(sum(amount) FILTER(WHERE created_at::date=current_date AND order_status IN ('print_queued','printing','completed')),0)::numeric(12,2) today_earnings,count(*) FILTER(WHERE order_status='cash_confirmation_pending')::int cash_pending,count(*) FILTER(WHERE order_status='payment_review')::int payment_pending,count(*) FILTER(WHERE order_status='pending_payment')::int awaiting_payment,count(*) FILTER(WHERE print_status IN ('queued','claimed','printing'))::int queue FROM orders WHERE shop_id=$1`, [shopId]); const { rows: recent } = await pool.query('SELECT o.*,u.original_name,j.error_message print_error FROM orders o JOIN uploads u ON u.id=o.upload_id LEFT JOIN print_jobs j ON j.order_id=o.id WHERE o.shop_id=$1 ORDER BY o.created_at DESC LIMIT 12', [shopId]); const { rows: agent } = await pool.query('SELECT agent_name,agent_last_seen FROM shops WHERE id=$1', [shopId]); res.json({ stats: rows[0], recent, agent: agent[0] }); }));
-router.get('/admin/orders', ...admin, asyncRoute(async (req, res) => { const params = [req.user.shopId]; let where = 'o.shop_id=$1'; if (req.query.status) { params.push(String(req.query.status)); where += ' AND o.order_status=$' + params.length; } if (req.query.from) { params.push(req.query.from); where += ' AND o.created_at >= $' + params.length + '::date'; } if (req.query.to) { params.push(req.query.to); where += ' AND o.created_at < ($' + params.length + '::date + interval \'1 day\')'; } if (req.query.q) { params.push(`%${String(req.query.q).slice(0, 100)}%`); where += ' AND (o.order_code ILIKE $' + params.length + ' OR u.original_name ILIKE $' + params.length + ')'; } const { rows } = await pool.query(`SELECT o.*,u.original_name,u.mime_type,u.byte_size,j.error_message print_error,j.attempts print_attempts FROM orders o JOIN uploads u ON u.id=o.upload_id LEFT JOIN print_jobs j ON j.order_id=o.id WHERE ${where} ORDER BY o.created_at DESC LIMIT 200`, params); res.json(rows); }));
+router.get('/admin/print-queue', ...admin, asyncRoute(async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT o.*, u.original_name, u.mime_type, u.byte_size,
+            j.error_message print_error, j.attempts print_attempts,
+            j.queue_position print_queue_position
+     FROM print_jobs j
+     JOIN orders o ON o.id = j.order_id
+     JOIN uploads u ON u.id = o.upload_id
+     WHERE j.shop_id = $1 AND j.status = 'queued'
+       AND o.order_status = 'print_queued' AND o.payment_status = 'verified'
+     ORDER BY j.queue_position, j.created_at, j.id`,
+    [req.user.shopId],
+  );
+  res.json(rows);
+}));
+router.patch('/admin/print-queue', ...admin, asyncRoute(async (req, res) => {
+  const orderIds = req.body?.orderIds;
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!Array.isArray(orderIds) || orderIds.some((id) => typeof id !== 'string' || !uuid.test(id))) {
+    return res.status(400).json({ error: 'A list of queued order IDs is required' });
+  }
+  const normalizedIds = orderIds.map((id) => id.toLowerCase());
+  if (new Set(normalizedIds).size !== normalizedIds.length) {
+    return res.status(400).json({ error: 'Queued order IDs must be unique' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await lockPrintQueue(client, req.user.shopId);
+    const { rows } = await client.query(
+      `SELECT o.id, o.order_code
+       FROM print_jobs j
+       JOIN orders o ON o.id = j.order_id
+       WHERE j.shop_id = $1 AND j.status = 'queued'
+         AND o.order_status = 'print_queued' AND o.payment_status = 'verified'
+       ORDER BY j.queue_position, j.created_at, j.id
+       FOR UPDATE OF j`,
+      [req.user.shopId],
+    );
+    const currentIds = rows.map((row) => row.id.toLowerCase());
+    const requestedIds = new Set(normalizedIds);
+    if (currentIds.length !== normalizedIds.length || currentIds.some((id) => !requestedIds.has(id))) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'The print queue changed. Refresh and try again.' });
+    }
+
+    await client.query(
+      `UPDATE print_jobs jobs
+       SET queue_position = ordered.position, updated_at = now()
+       FROM unnest($2::uuid[]) WITH ORDINALITY AS ordered(id, position)
+       WHERE jobs.order_id = ordered.id AND jobs.shop_id = $1 AND jobs.status = 'queued'`,
+      [req.user.shopId, normalizedIds],
+    );
+    const orderCodes = new Map(rows.map((row) => [row.id.toLowerCase(), row.order_code]));
+    await client.query(
+      'INSERT INTO audit_log(shop_id,actor,action,details) VALUES($1,$2,$3,$4)',
+      [req.user.shopId, req.user.email, 'print_queue.reordered', { orderCodes: normalizedIds.map((id) => orderCodes.get(id)) }],
+    );
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+router.get('/admin/orders', ...admin, asyncRoute(async (req, res) => { const params = [req.user.shopId]; let where = 'o.shop_id=$1'; if (req.query.status) { params.push(String(req.query.status)); where += ' AND o.order_status=$' + params.length; } if (req.query.from) { params.push(req.query.from); where += ' AND o.created_at >= $' + params.length + '::date'; } if (req.query.to) { params.push(req.query.to); where += ' AND o.created_at < ($' + params.length + '::date + interval \'1 day\')'; } if (req.query.q) { params.push(`%${String(req.query.q).slice(0, 100)}%`); where += ' AND (o.order_code ILIKE $' + params.length + ' OR u.original_name ILIKE $' + params.length + ')'; } const { rows } = await pool.query(`SELECT o.*,u.original_name,u.mime_type,u.byte_size,j.error_message print_error,j.attempts print_attempts,j.queue_position print_queue_position FROM orders o JOIN uploads u ON u.id=o.upload_id LEFT JOIN print_jobs j ON j.order_id=o.id WHERE ${where} ORDER BY o.created_at DESC LIMIT 200`, params); res.json(rows); }));
 router.post('/admin/orders/:orderId/cash-confirm', ...admin, asyncRoute(async (req, res) => transitionOrder(req, res, 'cash-confirm')));
 router.post('/admin/orders/:orderId/payment-verify', ...admin, asyncRoute(async (req, res) => transitionOrder(req, res, 'payment-verify')));
 router.post('/admin/orders/:orderId/cancel', ...admin, asyncRoute(async (req, res) => transitionOrder(req, res, 'cancel')));
@@ -456,7 +531,7 @@ router.get('/admin/analytics', ...admin, asyncRoute(async (req, res) => {
 }));
 router.patch('/admin/settings', ...admin, asyncRoute(async (req, res) => { const b = req.body; const { rows } = await pool.query('SELECT * FROM shops WHERE id=$1', [req.user.shopId]); const shop = rows[0]; const pc = b.printConfig ? validatePrintConfig(b.printConfig) : shop.print_config; const pricing = b.pricing ? validatePricing(b.pricing) : shop.pricing; const upiId = 'upiId' in b ? normalizeUpiId(b.upiId) : shop.upi_id; if (upiId && !isValidUpiId(upiId)) return res.status(400).json({ error: 'Enter a valid UPI ID such as shopname@bank' }); const upiName = 'upiName' in b ? (String(b.upiName || '').trim().slice(0, 60) || null) : shop.upi_name; const { rows: updated } = await pool.query('UPDATE shops SET name=$2,owner_name=$3,phone=$4,email=$5,address=$6,city=$7,upi_id=$8,upi_name=$9,pricing=$10,print_config=$11,agent_name=$12 WHERE id=$1 RETURNING *', [shop.id, b.name ?? shop.name, b.ownerName ?? shop.owner_name, b.phone ?? shop.phone, b.email ?? shop.email, b.address ?? shop.address, b.city ?? shop.city, upiId, upiName, pricing, pc, b.agentName ?? shop.agent_name]); await audit(shop.id, req.user.email, 'shop.settings.updated', { fields: Object.keys(b) }); res.json({ shop: safeShop(updated[0]) }); }));
 router.post('/admin/agent/rotate', ...admin, asyncRoute(async (req, res) => { const value = token(); await pool.query('UPDATE shops SET agent_token_hash=$2 WHERE id=$1', [req.user.shopId, sha256(value)]); res.json({ agentToken: value }); }));
-router.get('/admin/uploads/:orderId', ...admin, asyncRoute(async (req, res) => { const { rows } = await pool.query(`SELECT u.stored_name,u.original_name,o.print_file_name FROM uploads u JOIN orders o ON o.upload_id=u.id WHERE o.id=$1 AND o.shop_id=$2`, [req.params.orderId, req.user.shopId]); if (!rows[0]) return res.status(404).json({ error: 'Document not found' }); const file = rows[0].print_file_name || rows[0].stored_name; const target = path.join(uploadDir, path.basename(file)); if (!fs.existsSync(target)) return res.status(410).json({ error: 'This file is no longer stored on the server' }); res.download(target, rows[0].print_file_name ? `photo-sheet-${req.params.orderId.slice(0, 8)}.pdf` : rows[0].original_name); }));
+router.get('/admin/uploads/:orderId', ...admin, asyncRoute(async (req, res) => { const { rows } = await pool.query(`SELECT u.stored_name,u.original_name,o.print_file_name FROM uploads u JOIN orders o ON o.upload_id=u.id WHERE o.id=$1 AND o.shop_id=$2`, [req.params.orderId, req.user.shopId]); if (!rows[0]) return res.status(404).json({ error: 'Document not found' }); const file = rows[0].print_file_name || rows[0].stored_name; if (!isSafeStoredFilename(file)) return res.status(400).json({ error: 'Document filename is invalid' }); const target = path.join(uploadDir, file); if (!fs.existsSync(target)) return res.status(410).json({ error: 'This file is no longer stored on the server' }); res.download(target, rows[0].print_file_name ? `photo-sheet-${req.params.orderId.slice(0, 8)}.pdf` : rows[0].original_name); }));
 
 // Local print-agent API. A claim creates a lease and is atomic across agents.
 router.post('/agent/:shopId/heartbeat', asyncRoute(async (req, res) => { const shop = await agentShop(req); if (!shop) return res.status(401).json({ error: 'Invalid print-agent token' }); await pool.query('UPDATE shops SET agent_name=$2,agent_last_seen=now() WHERE id=$1', [shop.id, String(req.body.agentName || 'Print agent').slice(0, 100)]); res.json({ ok: true, serverTime: new Date().toISOString() }); }));
@@ -468,6 +543,7 @@ router.get('/agent/:shopId/jobs', asyncRoute(async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await lockPrintQueue(client, shop.id);
     const stale = await client.query(
       `UPDATE print_jobs
        SET status = CASE WHEN attempts >= 5 THEN 'failed' ELSE 'queued' END,
@@ -495,7 +571,7 @@ router.get('/agent/:shopId/jobs', asyncRoute(async (req, res) => {
        JOIN uploads u ON u.id = o.upload_id
        WHERE j.shop_id = $1 AND j.status = 'queued' AND j.attempts < 5
          AND o.order_status = 'print_queued' AND o.payment_status = 'verified'
-       ORDER BY j.created_at
+       ORDER BY j.queue_position, j.created_at, j.id
        FOR UPDATE OF j SKIP LOCKED
        LIMIT 1`,
       [shop.id],
@@ -523,13 +599,13 @@ router.get('/agent/:shopId/jobs', asyncRoute(async (req, res) => {
     client.release();
   }
 }));
-router.get('/agent/:shopId/jobs/:jobId/document', asyncRoute(async (req, res) => { const shop = await agentShop(req); if (!shop) return res.status(401).json({ error: 'Invalid print-agent token' }); const { rows } = await pool.query(`SELECT COALESCE(o.print_file_name,u.stored_name) stored_name,COALESCE(o.print_file_name,u.original_name) original_name FROM print_jobs j JOIN orders o ON o.id=j.order_id JOIN uploads u ON u.id=o.upload_id WHERE j.id=$1 AND j.shop_id=$2 AND j.claimed_by='print-agent' AND j.status IN ('claimed','printing')`, [req.params.jobId, shop.id]); if (!rows[0]) return res.status(404).json({ error: 'Claimed job not found' }); res.download(path.join(uploadDir, rows[0].stored_name), rows[0].original_name); }));
+router.get('/agent/:shopId/jobs/:jobId/document', asyncRoute(async (req, res) => { const shop = await agentShop(req); if (!shop) return res.status(401).json({ error: 'Invalid print-agent token' }); const { rows } = await pool.query(`SELECT COALESCE(o.print_file_name,u.stored_name) stored_name,COALESCE(o.print_file_name,u.original_name) original_name FROM print_jobs j JOIN orders o ON o.id=j.order_id JOIN uploads u ON u.id=o.upload_id WHERE j.id=$1 AND j.shop_id=$2 AND j.claimed_by='print-agent' AND j.status IN ('claimed','printing')`, [req.params.jobId, shop.id]); if (!rows[0]) return res.status(404).json({ error: 'Claimed job not found' }); if (!isSafeStoredFilename(rows[0].stored_name)) return res.status(400).json({ error: 'Document filename is invalid' }); res.download(path.join(uploadDir, rows[0].stored_name), rows[0].original_name); }));
 router.post('/agent/:shopId/jobs/:jobId/result', asyncRoute(async (req, res) => { const shop = await agentShop(req); if (!shop) return res.status(401).json({ error: 'Invalid print-agent token' }); const status = req.body.status; if (!['completed', 'failed'].includes(status)) return res.status(400).json({ error: 'Result must be completed or failed' }); const client = await pool.connect(); try { await client.query('BEGIN'); const { rows } = await client.query(`SELECT j.*,o.id order_id FROM print_jobs j JOIN orders o ON o.id=j.order_id WHERE j.id=$1 AND j.shop_id=$2 AND j.claimed_by='print-agent' AND j.status='claimed' FOR UPDATE OF j`, [req.params.jobId, shop.id]); if (!rows[0]) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Job lease is no longer active' }); } const errorMessage = status === 'failed' ? String(req.body.error || 'Printer command failed').slice(0, 1000) : null; await client.query('UPDATE print_jobs SET status=$2,error_message=$3 WHERE id=$1', [rows[0].id, status, errorMessage]); await client.query('UPDATE orders SET print_status=$2,order_status=$3,completed_at=CASE WHEN $2=\'completed\' THEN now() ELSE completed_at END WHERE id=$1', [rows[0].order_id, status, status === 'completed' ? 'completed' : 'failed']); await client.query('COMMIT'); res.json({ ok: true }); } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); } }));
 
 async function transitionOrder(req, res, action) {
   const shopId = req.user.shopId; const id = req.params.orderId; const client = await pool.connect();
   try {
-    await client.query('BEGIN'); const { rows } = await client.query('SELECT * FROM orders WHERE id=$1 AND shop_id=$2 FOR UPDATE', [id, shopId]); const order = rows[0]; if (!order) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Order not found' }); }
+    await client.query('BEGIN'); await lockPrintQueue(client, shopId); const { rows } = await client.query('SELECT * FROM orders WHERE id=$1 AND shop_id=$2 FOR UPDATE', [id, shopId]); const order = rows[0]; if (!order) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Order not found' }); }
     if (action === 'cash-confirm') {
       if (order.payment_method !== 'cash' || order.order_status !== 'cash_confirmation_pending') throw Object.assign(new Error('Cash order is not awaiting confirmation'), { status: 409 });
       await queueForPrint(client, order); await client.query(`UPDATE orders SET order_status='print_queued',print_status='queued',payment_status='verified',confirmed_at=now() WHERE id=$1`, [id]);
@@ -542,14 +618,28 @@ async function transitionOrder(req, res, action) {
       if (order.files_deleted_at) throw Object.assign(new Error('Print files were deleted after the 10-minute retention period and cannot be retried'), { status: 409 });
       if (!['claimed', 'printing', 'failed', 'completed'].includes(order.print_status)) throw Object.assign(new Error('Only jobs that are printing, failed or completed can be marked failed'), { status: 409 }); await client.query(`UPDATE print_jobs SET status='failed',error_message=$2 WHERE order_id=$1`, [id, String(req.body.reason || 'Marked failed by shop admin').slice(0, 1000)]); await client.query(`UPDATE orders SET order_status='failed',print_status='failed' WHERE id=$1`, [id]);
     } else if (action === 'retry-print') {
-      if (order.order_status !== 'failed' || order.payment_status !== 'verified') throw Object.assign(new Error('Only paid, failed orders can be requeued'), { status: 409 }); await client.query(`INSERT INTO print_jobs(order_id,shop_id,status) VALUES($1,$2,'queued') ON CONFLICT(order_id) DO UPDATE SET id=gen_random_uuid(),status='queued',attempts=0,error_message=NULL,claimed_by=NULL,claimed_at=NULL,updated_at=now()`, [id, shopId]); await client.query(`UPDATE orders SET order_status='print_queued',print_status='queued' WHERE id=$1`, [id]);
+      if (order.order_status !== 'failed' || order.payment_status !== 'verified') throw Object.assign(new Error('Only paid, failed orders can be requeued'), { status: 409 }); await requeuePrintJob(client, order); await client.query(`UPDATE orders SET order_status='print_queued',print_status='queued' WHERE id=$1`, [id]);
     } else if (action === 'complete') {
       const done = await client.query(`UPDATE orders SET order_status='completed',print_status='completed',completed_at=now() WHERE id=$1 AND order_status='printing'`, [id]); if (!done.rowCount) throw Object.assign(new Error('Only an order that is printing can be marked complete'), { status: 409 }); await client.query(`UPDATE print_jobs SET status='completed' WHERE order_id=$1`, [id]);
     }
     await client.query('INSERT INTO audit_log(shop_id,actor,action,details) VALUES($1,$2,$3,$4)', [shopId, req.user.email, `order.${action}`, { orderCode: order.order_code }]); const { rows: updated } = await client.query('SELECT * FROM orders WHERE id=$1', [id]); await client.query('COMMIT'); res.json({ order: updated[0] });
   } catch (e) { await client.query('ROLLBACK'); if (e.status) return res.status(e.status).json({ error: e.message }); throw e; } finally { client.release(); }
 }
-async function queueForPrint(client, order) { await client.query(`INSERT INTO print_jobs(order_id,shop_id,status) VALUES($1,$2,'queued') ON CONFLICT(order_id) DO NOTHING`, [order.id, order.shop_id]); }
+async function lockPrintQueue(client, shopId) { await client.query("SELECT pg_advisory_xact_lock(hashtext('print-wallah-queue'), hashtext($1))", [String(shopId)]); }
+async function nextPrintQueuePosition(client) { return (await client.query("SELECT nextval('print_queue_position_seq')::bigint position")).rows[0].position; }
+async function queueForPrint(client, order) {
+  const position = await nextPrintQueuePosition(client);
+  await client.query(`INSERT INTO print_jobs(order_id,shop_id,status,queue_position) VALUES($1,$2,'queued',$3) ON CONFLICT(order_id) DO NOTHING`, [order.id, order.shop_id, position]);
+}
+async function requeuePrintJob(client, order) {
+  const position = await nextPrintQueuePosition(client);
+  await client.query(
+    `INSERT INTO print_jobs(order_id,shop_id,status,queue_position) VALUES($1,$2,'queued',$3)
+     ON CONFLICT(order_id) DO UPDATE SET id=gen_random_uuid(),status='queued',queue_position=EXCLUDED.queue_position,
+       attempts=0,error_message=NULL,claimed_by=NULL,claimed_at=NULL,updated_at=now()`,
+    [order.id, order.shop_id, position],
+  );
+}
 const PHOTO_SIZES = {
   passport: { label: 'Passport 3.5 × 4.5 cm', w: 3.5, h: 4.5 },
   stamp: { label: 'Stamp 2 × 2.5 cm', w: 2, h: 2.5 },
@@ -710,12 +800,13 @@ function createPhotoPrintFile(items, outputPath, config) {
     try {
       let index = 0;
       for (const item of items) {
+        if (!isSafeStoredFilename(item.upload.stored_name)) throw new Error('Uploaded image has an invalid stored filename');
         for (let n = 0; n < item.quantity; n++, index++) {
           const page = Math.floor(index / g.capacity);
           if (page > 0 && index % g.capacity === 0) doc.addPage(pageOptions);
           const slot = index % g.capacity, col = slot % g.columns, row = Math.floor(slot / g.columns);
           const x = margin + col * (cellW + gap), y = margin + row * (cellH + gap);
-          const imagePath = path.join(uploadDir, path.basename(item.upload.stored_name));
+          const imagePath = path.join(uploadDir, item.upload.stored_name);
           const box = config.photoFit === 'contain' ? { fit: [photoW, photoH] } : { cover: [photoW, photoH] };
           doc.save();
           if (g.rotated) { doc.translate(x + cellW, y); doc.rotate(90); doc.image(imagePath, 0, 0, { ...box, align: 'center', valign: 'center' }); }

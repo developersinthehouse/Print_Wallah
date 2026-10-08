@@ -108,6 +108,26 @@ def safe_filename(value):
     return name or "print-job.pdf"
 
 
+def sumatra_print_settings(options, copies, page_count):
+    requested_range = options.get("pageRange", "all")
+    settings = [
+        requested_range if requested_range != "all" else f"1-{page_count}",
+        f"{copies}x",
+        f"paper={options.get('paperSize', 'A4')}",
+        "color" if options.get("color") else "monochrome",
+        "duplexlong" if options.get("duplex") else "simplex",
+    ]
+    if options.get("mode") == "photo":
+        settings.append("noscale")
+    else:
+        settings.extend([
+            options.get("orientation", "portrait"),
+            {"fit": "fit", "fill": "stretch", "actual": "noscale"}.get(options.get("scaling", "fit"), "fit"),
+        ])
+    settings.append("ignore-pdf-print-settings")
+    return ",".join(settings)
+
+
 def print_job(config, job):
     job_id = job["job_id"]
     prior = previous_state(job_id)
@@ -122,8 +142,18 @@ def print_job(config, job):
         return
 
     options = job["config"]
-    if options.get("paperType", "normal") == "glossy" and not config.get("allow_glossy", False):
-        message = "Glossy-paper jobs are disabled for automatic printing on this agent. Confirm printer media settings before handling the order manually."
+    paper_type = options.get("paperType", "normal")
+    command_template = config["print_command"]
+    supports_sumatra_settings = any("{print_settings}" in item for item in command_template)
+    has_paper_type_placeholder = any("{paper_type}" in item for item in command_template)
+    if paper_type == "glossy" and not config.get("allow_glossy", False):
+        message = "This order needs glossy paper, but automatic glossy printing is disabled for this agent. It was not sent to the printer."
+        logger.error("Order %s cannot print: %s", job["order_code"], message)
+        save_state(job_id, "failed")
+        report(config, job_id, "failed", message)
+        return
+    if paper_type != "normal" and supports_sumatra_settings and not has_paper_type_placeholder:
+        message = f"This order needs {paper_type} paper, but SumatraPDF cannot select the printer's media type. It was not sent to the printer. Use a tested printer-specific command with {{paper_type}} or print this order manually."
         logger.error("Order %s cannot print: %s", job["order_code"], message)
         save_state(job_id, "failed")
         report(config, job_id, "failed", message)
@@ -145,7 +175,14 @@ def print_job(config, job):
         required.append("{orientation}")
     if options.get("scaling", "fit") != "fit":
         required.append("{scaling}")
-    missing = [placeholder for placeholder in required if not any(placeholder in item for item in config["print_command"])]
+    sumatra_supported = {
+        "{copies}", "{page_range}", "{paper_size}", "{color}",
+        "{duplex}", "{orientation}", "{scaling}",
+    } if supports_sumatra_settings else set()
+    missing = [
+        placeholder for placeholder in required
+        if placeholder not in sumatra_supported and not any(placeholder in item for item in command_template)
+    ]
     if missing:
         message = "Print command does not support selected setting(s): " + ", ".join(missing)
         logger.error("Order %s cannot print: %s", job["order_code"], message)
@@ -172,9 +209,10 @@ def print_job(config, job):
         "duplex": "two-sided-long-edge" if options.get("duplex") else "one-sided",
         "orientation": "4" if options.get("orientation") == "landscape" else "3",
         "scaling": {"fit": "fit", "fill": "fill", "actual": "none"}.get(options.get("scaling", "fit"), "fit"),
+        "print_settings": sumatra_print_settings(options, job["copies"], page_count),
         "order_code": job["order_code"],
     }
-    command = [part.format(**config_values) for part in config["print_command"]]
+    command = [part.format(**config_values) for part in command_template]
     command = [part for part in command if part]
     save_state(job_id, "started")
     try:

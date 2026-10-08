@@ -49,6 +49,92 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(calls[-1][2]["status"], "completed")
         self.assertEqual(print_agent.previous_state("job-1"), "completed")
 
+    def test_sumatra_settings_map_all_supported_order_options(self):
+        self.config["print_command"] = [
+            "SumatraPDF.exe", "-print-to", "{printer}",
+            "-print-settings", "{print_settings}", "-silent", "{file}",
+        ]
+        self.job["config"] = {
+            **self.job["config"],
+            "pageRange": "1-2,4",
+            "paperSize": "A3",
+            "color": True,
+            "duplex": True,
+            "orientation": "landscape",
+            "scaling": "fill",
+        }
+
+        with patch.object(print_agent, "request", return_value=b"%PDF-test"), patch.object(
+            print_agent.subprocess,
+            "run",
+            return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+        ) as run:
+            print_agent.print_job(self.config, self.job)
+
+        command = run.call_args.args[0]
+        self.assertEqual(
+            command[command.index("-print-settings") + 1],
+            "1-2,4,2x,paper=A3,color,duplexlong,landscape,stretch,ignore-pdf-print-settings",
+        )
+
+    def test_sumatra_settings_map_defaults_and_override_pdf_preferences(self):
+        settings = print_agent.sumatra_print_settings(
+            {
+                "pageRange": "all",
+                "paperSize": "A4",
+                "color": False,
+                "duplex": False,
+                "orientation": "portrait",
+                "scaling": "fit",
+            },
+            copies=1,
+            page_count=3,
+        )
+
+        self.assertEqual(
+            settings,
+            "1-3,1x,paper=A4,monochrome,simplex,portrait,fit,ignore-pdf-print-settings",
+        )
+
+    def test_sumatra_preserves_server_composed_photo_sheet_layout(self):
+        settings = print_agent.sumatra_print_settings(
+            {
+                "mode": "photo",
+                "pageRange": "all",
+                "paperSize": "A4",
+                "color": True,
+                "duplex": False,
+                "orientation": "landscape",
+                "scaling": "fill",
+            },
+            copies=1,
+            page_count=1,
+        )
+
+        self.assertEqual(
+            settings,
+            "1-1,1x,paper=A4,color,simplex,noscale,ignore-pdf-print-settings",
+        )
+
+    def test_sumatra_glossy_order_reports_unsupported_media_selection(self):
+        self.config["allow_glossy"] = True
+        self.config["print_command"] = [
+            "SumatraPDF.exe", "-print-settings", "{print_settings}", "{file}",
+        ]
+        self.job["config"] = {**self.job["config"], "paperType": "glossy"}
+
+        with patch.object(print_agent, "request") as request, patch.object(
+            print_agent.subprocess, "run"
+        ) as run:
+            print_agent.print_job(self.config, self.job)
+
+        run.assert_not_called()
+        self.assertTrue(any(
+            "SumatraPDF cannot select the printer's media type" in call.args[3]["error"]
+            for call in request.call_args_list
+            if call.args[3].get("status") == "failed"
+        ))
+
     def test_missing_nondefault_option_fails_without_printing(self):
         self.config["print_command"] = ["lp", "{file}"]
         with patch.object(print_agent, "request") as request, patch.object(print_agent.subprocess, "run") as run:
@@ -103,7 +189,7 @@ class AgentTests(unittest.TestCase):
             print_agent.print_job(self.config, job)
         run.assert_not_called()
         self.assertEqual(request.call_args.args[3]["status"], "failed")
-        self.assertIn("Glossy-paper jobs are disabled", request.call_args.args[3]["error"])
+        self.assertIn("automatic glossy printing is disabled", request.call_args.args[3]["error"])
 
     def test_long_print_renews_the_specific_job_lease(self):
         heartbeat = print_agent.Heartbeat(self.config, "job-1")

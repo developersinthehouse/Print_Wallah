@@ -89,6 +89,6 @@ npm run db:init   # initialize or upgrade the current schema
 
 ## API and current limitations
 
-See [API reference](docs/API.md) and [architecture and implementation status](MEMORY.md). The image preview approximates the selected paper and scaling; PDF preview is the browser's first-page viewer. Printer drivers still determine final color, margins, scaling, and output quality; the preview is not hardware-calibrated proofing.
+See [API reference](docs/API.md) and [architecture and implementation status](memory.md). The image preview approximates the selected paper and scaling; PDF preview is the browser's first-page viewer. Printer drivers still determine final color, margins, scaling, and output quality; the preview is not hardware-calibrated proofing.
 
 Online payments are manually reconciled. There is no gateway or automatic webhook verification until a supported provider account and credentials are configured. For production, use persistent private storage, HTTPS, a restricted PostgreSQL user, backups, and a payment-provider integration before accepting remote payments at scale.

@@ -1,5 +1,6 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { isSafeStoredFilename } = require('./storagePolicy');
 
 const PRINT_FILE_RETENTION_MS = 10 * 60 * 1000;
 const CLEANUP_BATCH_SIZE = 100;
@@ -35,14 +36,19 @@ async function cleanupCompletedOrderFiles({ pool, uploadDir, now = new Date() })
       const storedNames = new Set(uploadRows.map((row) => row.stored_name));
       if (order.print_file_name) storedNames.add(order.print_file_name);
 
+      let skippedUnsafeFiles = 0;
       for (const storedName of storedNames) {
-        if (typeof storedName !== 'string' || !storedName || path.basename(storedName) !== storedName) {
-          throw new Error(`Unsafe stored print-file name for order ${order.id}`);
+        if (!isSafeStoredFilename(storedName)) {
+          skippedUnsafeFiles += 1;
+          continue;
         }
         await fs.rm(path.join(uploadDir, storedName), { force: true });
         deletedFiles += 1;
       }
 
+      if (skippedUnsafeFiles) {
+        console.warn(`Skipped ${skippedUnsafeFiles} unsafe stored filename(s) for completed order ${order.id}`);
+      }
       await client.query(
         'UPDATE orders SET files_deleted_at = $2 WHERE id = $1 AND files_deleted_at IS NULL',
         [order.id, now],

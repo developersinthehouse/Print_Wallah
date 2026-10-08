@@ -86,10 +86,12 @@ CREATE TABLE IF NOT EXISTS payments (
 );
 CREATE INDEX IF NOT EXISTS payments_shop_idx ON payments (shop_id, created_at DESC);
 
+CREATE SEQUENCE IF NOT EXISTS print_queue_position_seq;
 CREATE TABLE IF NOT EXISTS print_jobs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   order_id UUID NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
   shop_id UUID NOT NULL REFERENCES shops(id),
+  queue_position BIGINT,
   status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','claimed','printing','completed','failed')),
   attempts INTEGER NOT NULL DEFAULT 0,
   claimed_by TEXT,
@@ -98,7 +100,20 @@ CREATE TABLE IF NOT EXISTS print_jobs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS print_jobs_queue_idx ON print_jobs (shop_id, status, created_at);
+ALTER TABLE print_jobs ADD COLUMN IF NOT EXISTS queue_position BIGINT;
+WITH ranked AS (
+  SELECT id, row_number() OVER (PARTITION BY shop_id ORDER BY created_at, id) AS position
+  FROM print_jobs
+  WHERE queue_position IS NULL AND status = 'queued'
+)
+UPDATE print_jobs jobs SET queue_position = ranked.position
+FROM ranked WHERE jobs.id = ranked.id;
+UPDATE print_jobs SET queue_position = nextval('print_queue_position_seq')
+WHERE queue_position IS NULL;
+ALTER TABLE print_jobs ALTER COLUMN queue_position SET DEFAULT nextval('print_queue_position_seq');
+ALTER TABLE print_jobs ALTER COLUMN queue_position SET NOT NULL;
+SELECT setval('print_queue_position_seq', GREATEST(COALESCE(MAX(queue_position), 1), 1), true) FROM print_jobs;
+CREATE INDEX IF NOT EXISTS print_jobs_queue_order_idx ON print_jobs (shop_id, status, queue_position, created_at);
 
 CREATE TABLE IF NOT EXISTS access_extensions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

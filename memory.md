@@ -151,6 +151,20 @@ All of the above, plus the fixes listed in the Change Log.
 
 ## Change Log
 
+- 2026-10-06 v4.1 (polish round):
+  - Shop Admin phone order rows show only file name, time, amount, status and the main action (full details stay in the drawer); desktop rows unchanged.
+  - Super Admin Reports: range presets, live search, sort, per-shop revenue bar, tap-to-expand details (UPI/cash split, pending, failed, copy shop ID); compact header on phones.
+  - Customer portal: offline-printer notice is one tappable line on phones, phone number hidden in the hero on phones, calmer footer, compact payment/status screens, smaller logo on phone/tablet, navbar turns to glass with a hairline once the page scrolls.
+  - All-caps labels removed (login kicker, modal eyebrows, stat/table/footer headings); no `text-transform: uppercase` remains.
+- 2026-10-05 v4 (control-panel redesign, mobile-first customer portal):
+  - Frontend split by audience: `app.js` (shared bootstrap, API, dialogs, footer), `admin.js` + `admin.css` (Shop Admin and Super Admin, loaded only on admin routes), `customer.js` + pdf.js + `photoedit.js` (loaded only on `/shop/<id>`), `styles.css` (tokens, base, customer portal, shared overlays). No API, schema, auth, payment or print-agent code changed.
+  - Admin shell: sidebar on desktop, glass tab bar on phones; Overview (needs-action queue, stats, printer status, latest activity), Orders (search, filter chips with counts, status-first rows, detail drawer / bottom sheet with full metadata and every action), Reports, Settings (two columns, sticky unsaved-changes bar, discard guard). Super Admin: Shops (search, access meter) and Reports.
+  - `confirm()` / `prompt()` replaced by an in-app dialog (`confirmDialog`) in admin and customer flows. Action buttons lock while a request is in flight.
+  - Customer portal: collapsible privacy note, optional name/phone collapsed, shorter microcopy, compact UPI screen (manual-pay details collapsed), empty preview hidden on phones, footer rebuilt with SVG social icons. UPI flow unchanged (`upi://pay` link built server-side).
+  - CSS: ~110 unused rules removed outright; the customer-portal rules were replaced by one mobile-first layer at the end of `styles.css` (previously several stacked override layers). Superseded admin functions removed from `app.js` (moved/rewritten in `admin.js`).
+  - Tests: fixed stale assertions in `test/smoke.js` (analytics returns `{rows}`, order view exposes `fileName`) and `test/payments.js` (webhook replays need `currency`, error wording). Product code was not at fault.
+  - Open items for the owner: replace the placeholder social URLs in `SOCIAL` (`public/app.js`); set real URLs before launch. Real-device UPI app hand-off and iOS Safari were not testable in the build sandbox (UPI link format is covered by tests).
+
 - 2026-10-01 v3 (customer portal UX, redesign, navigation, state):
   - Redesign: neutral ink-dark system, borderless cards, Plus Jakarta Sans, spacing tokens, doodle icon set, floating navbar, premium customer footer.
   - Routing: fixed shop-list Customer Portal link (was a button sharing the Details handler); logo, Back to home and login switches use real URLs.

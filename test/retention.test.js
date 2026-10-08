@@ -115,3 +115,39 @@ test('failed orders retain their files for retry', async () => {
     await fs.rm(uploadDir, { recursive: true, force: true });
   }
 });
+
+test('unsafe stored filenames are never deleted and do not block completed-order cleanup', async () => {
+  const uploadDir = await fs.mkdtemp(path.join(os.tmpdir(), 'print-wallah-retention-'));
+  const outsidePath = path.join(path.dirname(uploadDir), `${path.basename(uploadDir)}-unsafe-test.txt`);
+  const now = new Date('2026-10-02T12:20:00.000Z');
+  const order = {
+    id: 'order-unsafe',
+    uploadId: 'upload-unsafe',
+    printFileName: null,
+    orderStatus: 'completed',
+    completedAt: new Date(now.getTime() - 10 * 60 * 1000),
+    filesDeletedAt: null,
+  };
+  try {
+    await fs.writeFile(outsidePath, 'must not be deleted');
+    await fs.writeFile(path.join(uploadDir, 'safe.pdf'), 'safe file');
+    const result = await cleanupCompletedOrderFiles({
+      pool: makePool(order, ['../retention-unsafe-test.txt', 'safe.pdf'], []),
+      uploadDir,
+      now,
+    });
+
+    assert.deepEqual(result, { ordersDeleted: 1, filesDeleted: 1 });
+    assert.equal(order.filesDeletedAt.toISOString(), now.toISOString());
+    await assert.rejects(fs.stat(path.join(uploadDir, 'safe.pdf')), { code: 'ENOENT' });
+    assert.equal(await fs.readFile(outsidePath, 'utf8'), 'must not be deleted');
+    assert.deepEqual(await cleanupCompletedOrderFiles({
+      pool: makePool(order, ['../retention-unsafe-test.txt', 'safe.pdf'], []),
+      uploadDir,
+      now,
+    }), { ordersDeleted: 0, filesDeleted: 0 });
+  } finally {
+    await fs.rm(uploadDir, { recursive: true, force: true });
+    await fs.rm(outsidePath, { force: true });
+  }
+});

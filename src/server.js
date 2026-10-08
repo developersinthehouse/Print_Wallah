@@ -10,8 +10,9 @@ const api = require('./routes/api');
 const { createAgentLeaseRouter } = require('./routes/agentLease');
 const { cleanupCompletedOrderFiles } = require('./services/retention');
 const jwt = require('jsonwebtoken');
-const { lanAddresses, isLocalHost } = require('./services/network');
+const { lanAddresses } = require('./services/network');
 const { webhookEnabled } = require('./services/webhook');
+const { isSafeStoredFilename } = require('./services/storagePolicy');
 
 const production = process.env.NODE_ENV === 'production';
 const limiter = (limit, options = {}) => rateLimit({ windowMs: 15 * 60 * 1000, limit, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many requests. Please wait a few minutes and try again.' }, ...options });
@@ -28,15 +29,17 @@ async function main() {
   fs.mkdirSync(uploadDir, { recursive: true });
   const cleanupUploads = async () => {
     const { rows } = await pool.query(`DELETE FROM uploads u WHERE u.expires_at<now() AND NOT EXISTS(SELECT 1 FROM orders o WHERE o.upload_id=u.id) AND NOT EXISTS(SELECT 1 FROM order_uploads x WHERE x.upload_id=u.id) RETURNING stored_name`);
-    for (const row of rows) fs.rmSync(path.join(uploadDir, path.basename(row.stored_name)), { force: true });
-    if (rows.length) console.log(`Removed ${rows.length} expired unclaimed upload(s)`);
+    const safeRows = rows.filter((row) => isSafeStoredFilename(row.stored_name));
+    for (const row of safeRows) fs.rmSync(path.join(uploadDir, row.stored_name), { force: true });
+    if (safeRows.length !== rows.length) console.warn(`Skipped ${rows.length - safeRows.length} expired upload row(s) with unsafe stored filenames`);
+    if (rows.length) console.log(`Removed ${safeRows.length} expired unclaimed upload(s)`);
   };
   cleanupUploads().catch(error => console.error('Upload cleanup failed:', error.message));
   const cleanupTimer = setInterval(() => cleanupUploads().catch(error => console.error('Upload cleanup failed:', error.message)), 60 * 60 * 1000);
   cleanupTimer.unref();
   const cleanupCompletedFiles = () => cleanupCompletedOrderFiles({ pool, uploadDir })
     .then(({ ordersDeleted }) => { if (ordersDeleted) console.log(`Deleted print files for ${ordersDeleted} completed order(s)`); })
-    .catch(error => console.error('Completed-order file cleanup failed:', error.message));
+    .catch(error => console.error('Completed-order file cleanup failed:', error?.stack || error));
   cleanupCompletedFiles();
   const retentionTimer = setInterval(cleanupCompletedFiles, 60 * 1000);
   retentionTimer.unref();
@@ -101,19 +104,13 @@ function printBanner(port, host) {
   const line = (label, value) => console.log(`  ${label.padEnd(16)}${value}`);
   console.log(`\nPrint Wallah is running (${production ? 'production' : 'development'})\n`);
   line('Local:', `http://localhost:${port}`);
-  if (lan.length) lan.forEach((item, i) => line(i === 0 ? 'Network:' : '', `http://${item.address}:${port}${i === 0 ? '   <- open this on your phone (same Wi-Fi)' : `   (${item.name})`}`));
-  else if (host !== '127.0.0.1' && host !== 'localhost') line('Network:', 'no LAN address found. Connect to Wi-Fi/Ethernet.');
-  line('API base:', `http://localhost:${port}/api${lan[0] ? `  |  http://${lan[0].address}:${port}/api` : ''}`);
-  line('Health check:', `http://localhost:${port}/api/health`);
-  line('Super Admin:', `/    Shop Admin: /admin    Customer: /shop/<shop id>`);
+  if (lan.length) lan.forEach((item) => line('Network:', `http://${item.address}:${port}`));
+  else if (host !== '127.0.0.1' && host !== 'localhost') line('Network:', 'unavailable');
+  line('Payments:', webhookEnabled() ? 'webhook receiver (provider adapter required)' : 'manual verification');
+  if (production && (!process.env.APP_URL || !/^https:\/\//.test(process.env.APP_URL))) {
+    console.warn('  WARNING: set APP_URL to the public https:// address so QR codes and UPI flows work.');
+  }
   console.log('');
-  console.log('  The frontend and API are one server, so the phone uses the same address for both (no CORS or API URL to configure).');
-  if (!production) {
-    let appHost = ''; try { appHost = new URL(process.env.APP_URL).host; } catch { /* unset */ }
-    if (!appHost || isLocalHost(appHost)) console.log('  APP_URL is localhost or unset: shop QR codes use the address you open the site with. Open Super Admin via the Network URL to create QR codes a phone can scan.');
-    if (lan.length) console.log('  If the phone cannot connect, allow Node.js through the firewall for private networks and confirm both devices are on the same Wi-Fi.');
-  } else if (!process.env.APP_URL || !/^https:\/\//.test(process.env.APP_URL)) console.warn('  WARNING: set APP_URL to the public https:// address so QR codes and UPI flows work.');
-  console.log(`  Payment webhook: ${webhookEnabled() ? 'enabled (POST /api/payments/webhook)' : 'disabled (manual UPI verification)'}\n`);
 }
 
 main().catch((error) => { console.error('Startup failed:', error.message); process.exit(1); });

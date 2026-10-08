@@ -73,17 +73,18 @@ function nudgeNeedsFile(what = 'option') {
 function setCustomerNav({ viewing = false } = {}) {
   const s = C.shop, active = viewing ? null : C.activeOrder;
   const call = s.phone ? `<a class="nav-chip chip-compact" href="tel:${esc(s.phone.replace(/[^\d+]/g, ''))}" aria-label="Call ${esc(s.name)}" title="Call shop">${icon('phone', 20)}<span>Call shop</span></a>` : '';
-  const track = active ? `<a class="nav-chip" href="/shop/${encodeURIComponent(s.id)}?order=${encodeURIComponent(active.code)}">${icon('printer', 20)}<span>Track order</span></a>` : '';
-  setHeading(s.name, track + call);
+  const track = active ? `<a class="nav-chip" href="/shop/${encodeURIComponent(s.id)}?order=${encodeURIComponent(active.code)}" aria-label="Track order">${icon('printer', 20)}<span>Track order</span></a>` : '';
+  setHeading("", track + call);
 }
 function footerHtml() {
-  const s = C.shop, active = C.activeOrder, year = new Date().getFullYear();
+  const s = C.shop, active = C.activeOrder;
   const maps = s.address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([s.name, s.address, s.city].filter(Boolean).join(', '))}` : null;
+  const tel = s.phone ? s.phone.replace(/[^\d+]/g, '') : '';
   return `<footer class="pw-footer"><div class="pw-footer-inner">
-    <div><img class="brand-logo" src="/assets/logo.png" alt="Print Wallah"><p class="tag">Upload, set it up, pay, and collect. Print Wallah connects you with ${esc(s.name)}.</p></div>
-    <div><h4>This shop</h4><ul><li><strong>${esc(s.name)}</strong></li>${s.address || s.city ? `<li class="address">${esc([s.address, s.city].filter(Boolean).join(', '))}</li>` : ''}${s.phone ? `<li><a href="tel:${esc(s.phone.replace(/[^\d+]/g, ''))}">${icon('phone', 18)}${esc(s.phone)}</a></li>` : ''}${maps ? `<li><a href="${maps}" target="_blank" rel="noopener">${icon('pin', 18)}Open in Maps</a></li>` : ''}</ul></div>
-    <div><h4>Quick links</h4><ul><li><a href="#file-card" data-jump="file-card">${icon('upload', 18)}Start a print</a></li><li><a href="#settings-card" data-jump="settings-card">${icon('sliders', 18)}Print settings</a></li>${active ? `<li><a href="/shop/${encodeURIComponent(s.id)}?order=${encodeURIComponent(active.code)}">${icon('printer', 18)}Track my order</a></li>` : ''}<li><a href="/admin">${icon('doc', 18)}Shop staff sign in</a></li></ul></div>
-  </div><div class="pw-footer-bottom"><span>&copy; ${year} Print Wallah</span><span class="footer-credit">Made by DEVELOPERS · <a href="https://example.com/replace-official-site-url" target="_blank" rel="noopener">thedevelopers.co.in</a></span><nav class="social-links" aria-label="DEVELOPERS social links"><a href="https://example.com/replace-instagram-url" aria-label="Instagram" title="Instagram">IG</a><a href="https://example.com/replace-x-url" aria-label="Twitter or X" title="Twitter or X">X</a><a href="https://example.com/replace-linkedin-url" aria-label="LinkedIn" title="LinkedIn">in</a><a href="https://example.com/replace-whatsapp-url" aria-label="WhatsApp" title="WhatsApp">WA</a><a href="https://example.com/replace-github-url" aria-label="GitHub" title="GitHub">GH</a><a href="mailto:replace-email-address" aria-label="Email" title="Email">@</a></nav></div></footer>`;
+    <section class="pf-brand"><img class="brand-logo" src="/assets/Print-Wallah_wordmark.png" alt="Print Wallah"><p class="tag">Upload, set up, pay and collect, with ${esc(s.name)}.</p></section>
+    <section class="pf-shop" aria-label="This shop"><h4>This shop</h4><strong>${esc(s.name)}</strong>${s.address || s.city ? `<p class="address">${esc([s.address, s.city].filter(Boolean).join(', '))}</p>` : ''}<div class="pf-actions">${tel ? `<a class="pf-pill" href="tel:${esc(tel)}">${icon('phone', 18)}<span>Call</span></a>` : ''}${maps ? `<a class="pf-pill" href="${maps}" target="_blank" rel="noopener">${icon('pin', 18)}<span>Maps</span></a>` : ''}</div></section>
+    <nav class="pf-links" aria-label="Quick links"><h4>Quick links</h4><ul><li><a href="#file-card" data-jump="file-card">Start a print</a></li><li><a href="#settings-card" data-jump="settings-card">Print settings</a></li>${active ? `<li><a href="/shop/${encodeURIComponent(s.id)}?order=${encodeURIComponent(active.code)}">Track my order</a></li>` : ''}<li><a href="/admin">Shop staff sign in</a></li></ul></nav>
+  </div>${legalFooterHtml()}</footer>`;
 }
 function wireJumps() { document.querySelectorAll('[data-jump]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); document.querySelector('#' + a.dataset.jump)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); })); }
 function creditLine() { return '<p class="countdown mt-5">Print Wallah &middot; Made by DEVELOPERS</p>'; }
@@ -93,7 +94,7 @@ function errorScreen(title, message, retry = true) { return `<div class="login-w
 function freshState(shop) {
   const pc = shop.printConfig;
   return {
-    shop, items: [], quote: null, revision: 0, submitting: false, previewIndex: 0, pdf: null, pageCache: {}, renderCache: new Map(), upiOpened: false, launched: false, editing: 0, activeOrder: null, notice: null, order: null,
+    shop, items: [], quote: null, revision: 0, submitting: false, previewIndex: 0, pdf: null, pageCache: {}, renderCache: new Map(), upiOpened: false, editing: 0, activeOrder: null, notice: null, order: null,
     cfg: { mode: 'document', paperSize: pc.paperSizes.includes(pc.defaultPaper) ? pc.defaultPaper : pc.paperSizes[0], paperType: pc.paperTypes.includes('normal') ? 'normal' : pc.paperTypes[0], orientation: 'portrait', scaling: 'fit', color: false, duplex: false, copies: 1, pageRange: 'all', rangeMode: 'all', photoSize: shop.photoSizes[0].id, photoFit: 'cover' },
   };
 }
@@ -147,12 +148,12 @@ function renderHome() {
   const s = C.shop, rate = Number(s.pricing.bw_a4) > 0 ? `B&amp;W A4 from ${money(s.pricing.bw_a4)}` : '';
   const a = C.activeOrder;
   app.innerHTML = `<div class="page">
-    <section class="hero"><div><div class="eyebrow">Print online</div><h1>${esc(s.name)}</h1>
+    <section class="hero"><div><h1>${esc(s.name)}</h1>
       <div class="where">${s.address || s.city ? `<span>${icon('pin', 18)}${esc([s.address, s.city].filter(Boolean).join(', '))}</span>` : ''}${s.phone ? `<a href="tel:${esc(s.phone.replace(/[^\d+]/g, ''))}">${icon('phone', 18)}${esc(s.phone)}</a>` : ''}${rate ? `<span>${icon('rupee', 18)}${rate}</span>` : ''}</div></div>
       <ol class="steps" aria-label="How it works"><li>${icon('upload', 34)}Upload</li><li>${icon('sliders', 34)}Set up</li><li>${icon('pay', 34)}Pay</li><li>${icon('printer', 34)}Collect</li></ol></section>
-    <p class="retention-note" role="note">Print files are automatically deleted about 10 minutes after printing completes. Order and payment records are retained.</p>
+    <details class="fold"><summary>${icon('info', 18)}<span>Files are deleted after printing</span></summary><p>Print files are automatically deleted about 10 minutes after printing completes. Order and payment records are retained.</p></details>
     ${C.notice ? `<div class="inline-notice ${C.notice.kind} mb" id="home-notice" style="margin-bottom:var(--s-5)">${esc(C.notice.text)}</div>` : ''}
-    ${s.printerOnline ? '' : `<div class="inline-notice warn" style="margin-bottom:var(--s-5)">The shop's print computer is not connected right now. You can still place your order. It prints when the shop reconnects.</div>`}
+    ${s.printerOnline ? '' : `<div class="printer-note"><div class="pn-full inline-notice warn">The shop’s printer is offline right now. You can still order; it prints when the shop reconnects.</div><details class="pn-fold"><summary><i aria-hidden="true"></i><span>Printer is offline</span></summary><p>The shop’s printer is offline right now. You can still order; it prints when the shop reconnects.</p></details></div>`}
     ${a ? `<div class="resume-banner">${icon('printer', 44)}<div><strong>You have an order in progress</strong><div class="subtext">${esc(a.code)} &middot; ${money(a.amount)} &middot; ${esc(orderStateText(a))}</div></div><a class="button button-primary button-small" href="/shop/${encodeURIComponent(s.id)}?order=${encodeURIComponent(a.code)}">View order</a></div>` : ''}
     <div class="portal-grid"><div class="portal-col"><section class="card" id="file-card" style="order:1"></section><section class="card" id="settings-card" style="order:3"></section><section class="card hidden" id="edit-card" style="order:4"></section></div>
     <div class="portal-col sticky-col"><section class="card" id="preview-card" style="order:2"></section><section class="card" id="summary-card" style="order:5"></section></div></div>
@@ -169,7 +170,7 @@ function renderFileArea() { C.items.length ? renderFileCard() : renderDropzone()
 function renderDropzone() {
   const card = document.querySelector('#file-card'), photo = C.cfg.mode === 'photo', max = window.MAX_UPLOAD_MB || 30;
   card.innerHTML = `<div class="card-title">${icon(photo ? 'photo' : 'doc')}<div><span class="step">Step 1</span><h2>${photo ? 'Choose your photos' : 'Choose your file'}</h2></div></div>
-    <label class="dropzone" id="dropzone">${icon('upload')}<input type="file" id="file-input" accept="${photo ? 'image/jpeg,image/png,.jpg,.jpeg,.png' : 'application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png'}" multiple><strong>${photo ? 'Tap to choose photos' : 'Tap to choose files'}</strong><span class="subtext">${photo ? 'JPG or PNG' : 'PDF, JPG or PNG'}, up to ${max} MB each${photoAvailable() && !photo ? '. Choose several photos to print them on one sheet.' : ' · Select up to 10 documents/images for one combined order.'}</span></label>
+    <label class="dropzone" id="dropzone">${icon('upload')}<input type="file" id="file-input" accept="${photo ? 'image/jpeg,image/png,.jpg,.jpeg,.png' : 'application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png'}" multiple><strong>${photo ? 'Tap to choose photos' : 'Tap to choose files'}</strong><span class="dz-types">${photo ? 'JPG or PNG' : 'PDF, JPG or PNG'} · up to ${max} MB each</span><span class="dz-more">${photoAvailable() && !photo ? 'Several photos can share one sheet' : 'Up to 10 files in one order'}</span></label>
     <div class="form-error mt-4" id="upload-error"></div><div class="progress hidden" id="upload-progress"><span></span></div>`;
   const zone = card.querySelector('#dropzone'), input = card.querySelector('#file-input');
   input.onchange = () => { if (input.files.length) handleFiles([...input.files]); input.value = ''; };
@@ -293,7 +294,7 @@ function renderSettings() {
       <div class="field full"><label>Photos and how many of each</label>${locked ? '<div class="field-hint">Your photos will be listed here with a quantity for each.</div>' : `<div class="photo-list">${C.items.map((it, i) => `<div class="photo-row ${i === C.editing ? 'editing' : ''}"><img src="${it.url}" alt=""><div class="file-meta"><div class="file-name">${esc(it.upload.fileName)}</div>${PhotoEdit.isEdited(it.edit) ? '<span class="edited-dot">Edited</span>' : ''}</div><div class="stepper"><button type="button" data-qty="${i}" data-delta="-1" aria-label="Fewer">-</button><input type="number" inputmode="numeric" min="1" max="500" value="${it.quantity}" data-qty-input="${i}" aria-label="Quantity of ${esc(it.upload.fileName)}"><button type="button" data-qty="${i}" data-delta="1" aria-label="More">+</button></div>${C.items.length > 1 ? `<button type="button" class="button button-light button-small remove" data-remove="${i}">Remove</button>` : ''}</div>`).join('')}</div>
         ${C.items.length < 12 ? '<label class="button button-light button-small mt-3" style="cursor:pointer;width:fit-content">Add more photos<input type="file" id="add-photos" accept="image/jpeg,image/png" multiple style="position:absolute;width:1px;height:1px;opacity:0"></label>' : ''}`}
         <div class="field-hint mt-3" id="photo-summary">${locked ? '' : `${total} photo${total === 1 ? '' : 's'}. `}${lay.capacity} fit on one ${cfg.paperSize} sheet${lay.rotated ? ' (turned to fit more)' : ''}${locked ? '.' : `, so ${sheets} sheet${sheets === 1 ? '' : 's'}.`}</div></div>
-      <div class="full inline-notice">Photo sheets print on glossy paper in colour. Thin guide lines show where to cut.</div></div>`;
+      <div class="full field-hint">Printed in colour on glossy paper, with thin guide lines to cut along.</div></div>`;
   } else {
     const documentBundle = C.items.length > 1;
     const pageLabel = documentBundle ? `All ${C.items.reduce((sum, item) => sum + Number(item.upload.pages || 1), 0)} pages across ${C.items.length} files` : locked || !isPdf() ? 'All pages' : `All ${main.upload.pages}`;
@@ -304,7 +305,7 @@ function renderSettings() {
       ${sizeSelect}
       <div class="field"><label for="paper-type">Paper type</label><select id="paper-type" data-select="paperType">${pc.paperTypes.map((t) => `<option value="${t}" ${cfg.paperType === t ? 'selected' : ''}>${t === 'normal' ? 'Normal' : 'Glossy'}</option>`).join('')}</select></div>
       <div class="field"><label>Sides</label>${seg('duplex', cfg.duplex, [[false, 'Single-sided'], [true, 'Double-sided', !pc.duplex || cfg.paperType !== 'normal']])}</div>${orient}
-      <div class="field full"><label>Scaling</label>${seg('scaling', cfg.scaling, [['fit', 'Fit to page'], ['fill', 'Fill page'], ['actual', 'Actual size']])}<div class="field-hint">${{ fit: 'The whole page is shrunk or enlarged to fit inside the printable area.', fill: 'Page covers the whole sheet. Edges may be cropped.', actual: 'Printed at its real size from the top left. Large pages are cut off.' }[cfg.scaling]}</div></div></div>`;
+      <div class="field full"><label>Scaling</label>${seg('scaling', cfg.scaling, [['fit', 'Fit to page'], ['fill', 'Fill page'], ['actual', 'Actual size']])}<div class="field-hint">${{ fit: 'Whole page fits inside the printable area.', fill: 'Covers the whole sheet; edges may be cropped.', actual: 'Real size from the top left; large pages are cut off.' }[cfg.scaling]}</div></div></div>`;
   }
   const allImages = C.items.every((item) => item.mime !== 'application/pdf');
   const modeToggle = photoAvailable() && (locked || allImages) ? `<div class="field mb-4" style="margin-bottom:var(--s-5)"><label>What are you printing?</label>${seg('mode', cfg.mode, [['document', 'Documents / pictures'], ['photo', 'Photo sheet']])}</div>` : '';
@@ -458,6 +459,7 @@ let drawToken = 0;
 async function drawPreview() {
   const card = document.querySelector('#preview-card'); if (!card || !C.cfg) return;
   const token = ++drawToken, { cfg, shop } = C, main = mainItem(), hasF = hasFile();
+  card.classList.toggle('is-empty', !hasF);
   const [pw0, ph0] = PAPER_MM[cfg.paperSize] || PAPER_MM.A4, landscape = cfg.orientation === 'landscape';
   const [sw, sh] = landscape ? [ph0, pw0] : [pw0, ph0];
   if (!card.querySelector('.preview-stage')) card.innerHTML = `<div class="card-title">${icon('printer')}<div><span class="step">Live preview</span><h2>How it will print</h2></div></div><div class="preview-stage" id="preview-stage"></div><div class="preview-caption" id="preview-caption"></div>`;
@@ -562,17 +564,16 @@ function renderSummary({ loading, error, expired }) {
   const card = document.querySelector('#summary-card'), bar = document.querySelector('#mobile-total'); if (!card) return;
   const q = C.quote, { cfg, shop } = C, file = hasFile();
   const sheetWord = cfg.mode === 'photo' ? `${q?.sheets || 0} photo sheet${q?.sheets === 1 ? '' : 's'}` : `${q?.pages || 0} page${q?.pages === 1 ? '' : 's'} x ${q?.copies || 0} cop${q?.copies === 1 ? 'y' : 'ies'}`;
-  const rows = q ? `<div class="quote-row"><span>${esc(sheetWord)}</span><strong>${q.printablePages ? q.printablePages * (q.copies || 1) + ' sheets' : ''}</strong></div><div class="quote-row"><span>Rate per sheet</span><strong>${money(q.rate)}</strong></div>${q.base ? `<div class="quote-row"><span>Printing</span><strong>${money(q.base)}</strong></div>` : ''}${q.photoCharge ? `<div class="quote-row"><span>Photo sheets (${q.sheets})</span><strong>${money(q.photoCharge)}</strong></div>` : ''}<div class="quote-total"><span>Total</span><span>${money(q.total)}</span></div>` : '';
+  const rows = q ? `<div class="quote-row"><span>${esc(sheetWord)}</span><strong>${q.printablePages ? `${q.printablePages * (q.copies || 1)} sheet${q.printablePages * (q.copies || 1) === 1 ? '' : 's'}` : ''}</strong></div><div class="quote-row"><span>Rate per sheet</span><strong>${money(q.rate)}</strong></div>${q.base && q.photoCharge ? `<div class="quote-row"><span>Printing</span><strong>${money(q.base)}</strong></div>` : ''}${q.photoCharge ? `<div class="quote-row"><span>Photo sheets (${q.sheets})</span><strong>${money(q.photoCharge)}</strong></div>` : ''}<div class="quote-total"><span>Total</span><span>${money(q.total)}</span></div>` : '';
   const ready = Boolean(q) && !error && !C.submitting, locked = !file;
   card.innerHTML = `<div class="card-title">${icon('pay')}<div><span class="step">Step 3</span><h2>Pay and send</h2></div></div>
     <div class="stack">
-    ${locked ? `<div class="price-empty">${icon('rupee')}<span>Your price appears here as soon as you upload a file and choose your options.</span></div>` : ''}
+    ${locked ? `<div class="price-empty">${icon('rupee')}<span>Your price appears once you add a file.</span></div>` : ''}
     ${loading ? '<div class="loading" style="padding:0"><span class="spinner"></span> Calculating price</div>' : ''}${error ? `<div class="inline-notice bad" role="alert">${esc(error)}</div>${expired ? '<button class="button button-light" id="reselect" type="button">Choose file again</button>' : ''}` : ''}${rows ? `<div>${rows}</div>` : ''}
-    <div class="settings-grid"><div class="field"><label for="cust-name">Your name (optional)</label><input id="cust-name" maxlength="100" autocomplete="name" value="${esc(C.name || '')}"></div><div class="field"><label for="cust-phone">Phone (optional)</label><input id="cust-phone" maxlength="40" inputmode="tel" autocomplete="tel" value="${esc(C.phone || '')}"></div></div>
+    <details class="fold fold-form" ${C.name || C.phone ? 'open' : ''}><summary>${icon('phone', 18)}<span>Add name or phone <em>(optional)</em></span></summary><div class="settings-grid"><div class="field"><label for="cust-name">Your name</label><input id="cust-name" maxlength="100" autocomplete="name" value="${esc(C.name || '')}"></div><div class="field"><label for="cust-phone">Phone</label><input id="cust-phone" maxlength="40" inputmode="tel" autocomplete="tel" value="${esc(C.phone || '')}"></div></div></details>
     <div class="${locked ? 'locked-zone' : ''}" id="pay-zone"><div class="pay-buttons"><button class="button button-primary button-lg" id="pay-upi" type="button" ${ready && shop.upiConfigured ? '' : 'disabled'}>Pay with UPI</button><button class="button button-lg" id="pay-cash" type="button" ${ready ? '' : 'disabled'}>Pay with cash</button></div>${locked ? '<div class="lock-cover" id="pay-cover" aria-hidden="true"></div>' : ''}</div>
-    ${shop.upiConfigured ? '' : '<div class="pay-note">This shop has not set up UPI. Pay with cash at the counter.</div>'}
     <div class="form-error" id="order-error" role="alert"></div>
-    <div class="pay-note">Your file is sent to the printer only after the shop confirms your payment.</div></div>`;
+    <div class="pay-note">${shop.upiConfigured ? 'Printing starts after the shop confirms your payment.' : 'This shop has not set up UPI. Pay cash at the counter; printing starts once the shop confirms.'}</div></div>`;
   card.querySelector('#reselect')?.addEventListener('click', () => { revokeUrls(); C.items = []; C.renderCache.clear(); renderDropzone(); renderSettings(); renderEditor(); drawPreview(); renderSummary({}); });
   card.querySelector('#cust-name').oninput = (e) => { C.name = e.target.value; }; card.querySelector('#cust-phone').oninput = (e) => { C.phone = e.target.value; };
   card.querySelector('#pay-cover')?.addEventListener('click', () => nudgeNeedsFile('step'));
@@ -606,7 +607,7 @@ async function submitOrder(method) {
   C.submitting = true; const buttons = [...document.querySelectorAll('#pay-upi,#pay-cash')]; buttons.forEach((b) => { b.disabled = true; });
   const errorBox = document.querySelector('#order-error'); errorBox.textContent = '';
   const clicked = document.querySelector(method === 'upi' ? '#pay-upi' : '#pay-cash'), label = clicked.textContent;
-  const launch = method === 'upi' && isTouchPhone(); clicked.innerHTML = '<span class="spinner" aria-hidden="true"></span> Preparing order';
+  clicked.innerHTML = '<span class="spinner" aria-hidden="true"></span> Preparing order';
   try {
     let tokens = null;
     try { tokens = await bakeEdited((t) => { clicked.textContent = t; }); } catch (e) { throw Object.assign(new Error(`Could not prepare your edited photo. ${e.message}`), { status: 0 }); }
@@ -616,7 +617,7 @@ async function submitOrder(method) {
     store.set(orderKey(C.shop.id), res.order.code);
     history.replaceState(null, '', `${location.pathname}?order=${encodeURIComponent(res.order.code)}`);
     C.submitting = false; C.activeOrder = null;
-    showOrder(res.order, { launch: launch && res.order.status === 'pending_payment' });
+    showOrder(res.order);
   } catch (e) {
     C.submitting = false; clicked.textContent = label;
     if (e.data?.code === 'PRICE_CHANGED') { await fetchQuote(); const box = document.querySelector('#order-error'); if (box) box.textContent = e.message; return; }
@@ -627,14 +628,14 @@ async function submitOrder(method) {
 }
 
 /* ---------- Order status, UPI and cash ---------- */
-function showOrder(order, { launch = false } = {}) {
+function showOrder(order) {
   clearTimers(); C.order = order;
   const s = C.shop, st = order.status;
   if (isTerminal(order)) store.del(orderKey(s.id)); else store.set(orderKey(s.id), order.code);
   C.activeOrder = isActiveOrder(order) ? order : null; setCustomerNav({ viewing: true });
   document.querySelector('#site-footer').classList.add('hidden');
   const homeBtn = `<button class="button button-light" id="back-home" type="button">Back to home</button>`;
-  const head = (art, title, text) => `<div class="status-art">${icon(art, 104)}</div><h1>${esc(title)}</h1>${text ? `<p class="lede">${text}</p>` : ''}`;
+  const head = (art, title, text) => `<div class="status-art">${icon(art, 96)}</div><h1>${esc(title)}</h1>${text ? `<p class="lede">${text}</p>` : ''}`;
   const detailRows = `<dt>File</dt><dd>${esc(order.fileName || 'Document')}</dd><dt>Amount</dt><dd>${money(order.amount)}</dd><dt>Payment</dt><dd>${order.paymentMethod === 'upi' ? 'UPI' : 'Cash'}</dd>`;
   const codeRow = `<dt>Order code</dt><dd class="mono">${esc(order.code)}</dd>`;
   const summary = `<dl class="kv">${codeRow}${detailRows}</dl>`, summaryBigCode = `<dl class="kv">${detailRows}</dl>`;
@@ -661,7 +662,7 @@ function showOrder(order, { launch = false } = {}) {
     timers.home = setInterval(() => { left--; const el = document.querySelector('#countdown'); if (left <= 0) { clearInterval(timers.home); goHome(); } else if (el?.firstChild) el.firstChild.textContent = `Taking you back to the home page in ${left} second${left === 1 ? '' : 's'}. `; }, 1000);
     document.querySelector('#stay')?.addEventListener('click', () => { clearInterval(timers.home); const el = document.querySelector('#countdown'); if (el) el.textContent = 'You can go back to the home page whenever you like.'; });
   }
-  wireUpi(order, launch);
+  wireUpi(order);
   if (!isTerminal(order)) startPolling(order);
 }
 function upiScreen(order, head) {
@@ -669,31 +670,49 @@ function upiScreen(order, head) {
   const homeBtn = `<button class="button button-light" id="back-home" type="button">Back to home</button>`;
   if (!u) return `${head('info', 'UPI link not available', 'Switch to cash or cancel this order.')}<div class="cluster mt-5"><button class="button" id="switch-cash" type="button">Pay cash instead</button>${homeBtn}</div>`;
   const copy = (v, label) => `<div class="copy-row"><span class="mono">${esc(v)}</span><button class="button button-light button-small" type="button" data-copy="${esc(v)}" aria-label="Copy ${label}">Copy</button></div>`;
-  return `${head('pay', `Pay ${money(order.amount)} to ${u.payee}`, phone ? 'Open your UPI app. Shop and amount are prefilled.' : 'Scan with a UPI app. Shop and amount are prefilled.')}
+  return `${head('pay', `Pay ${money(order.amount)} to ${u.payee}`, phone ? 'Opens a UPI app on your phone. Amount and shop are filled in.' : 'Scan this QR with a UPI app on your phone. Amount and shop are filled in.')}
   <div class="stack mt-5">
-  ${phone ? `<a class="button button-primary button-lg button-block" id="upi-open" href="${esc(u.uri)}">Open UPI app to pay ${money(order.amount)}</a><div class="inline-notice warn hidden" id="upi-hint">No UPI app opened? Use the QR code below from another phone, or copy the details and pay manually.</div>` : `<img class="upi-qr" src="${u.qr}" alt="UPI payment QR code for ${money(order.amount)}"><a class="button button-light button-block" id="upi-open" href="${esc(u.uri)}">Try opening a UPI app on this device</a>`}
-  <dl class="kv" style="margin:0"><dt>Pay to</dt><dd>${copy(u.id, 'UPI ID')}</dd><dt>Amount</dt><dd>${copy(Number(order.amount).toFixed(2), 'amount')}</dd><dt>Note</dt><dd>${copy(order.code, 'order code')}</dd></dl>
-  ${phone ? `<details><summary class="text-button">Show QR code</summary><img class="upi-qr" src="${u.qr}" alt="UPI payment QR code"></details>` : ''}
-  <div class="inset-card stack-sm" id="paid-box"><h3>After you pay</h3><p class="subtext">Return here and notify the shop. Printing starts after payment is confirmed.</p>
+  ${phone ? `<a class="button button-primary button-lg button-block" id="upi-open" href="${esc(u.uri)}">Open UPI app to pay ${money(order.amount)}</a>` : `<img class="upi-qr" src="${u.qr}" alt="UPI payment QR code for ${money(order.amount)}"><a class="button button-light button-block" id="upi-open" href="${esc(u.uri)}">Try opening a UPI app on this device</a>`}
+  <div class="inline-notice warn hidden" id="upi-hint" role="status">No UPI app opened, or you came back? This page cannot see your payment. Try again, scan the QR with another phone, pay using the details below, or choose cash.</div>
+  <details class="fold" ${phone ? '' : 'open'}><summary>${icon('pay', 18)}<span>Pay manually or scan QR</span></summary><dl class="kv" style="margin:var(--s-3) 0 0"><dt>Pay to</dt><dd>${copy(u.id, 'UPI ID')}</dd><dt>Amount</dt><dd>${copy(Number(order.amount).toFixed(2), 'amount')}</dd><dt>Note</dt><dd>${copy(order.code, 'order code')}</dd></dl>${phone ? `<img class="upi-qr" src="${u.qr}" alt="UPI payment QR code">` : ''}</details>
+  <div class="inset-card stack-sm" id="paid-box"><h3>After you pay</h3><p class="subtext">Come back here and tell the shop.</p>
     <div class="field"><label for="utr">UPI transaction ID (optional)</label><input id="utr" inputmode="text" autocomplete="off" maxlength="30" placeholder="Example: 412345678901"></div>
     <div class="form-error" id="claim-error" role="alert"></div>
     <button class="button button-primary button-lg button-block" id="claim-paid" type="button">I have paid</button></div>
   <div class="cluster"><button class="button button-light" id="switch-cash" type="button">Pay cash instead</button><button class="button button-danger" id="cancel-order" type="button">Cancel order</button>${homeBtn}</div>
-  <div id="live-note"></div><div class="pay-note">UPI cancelled? Try again above. Confirm only after money leaves your account.</div></div>`;
+  <div id="live-note"></div><div class="pay-note">Tap “I have paid” only after the money has left your account.</div></div>`;
 }
-function wireUpi(order, launch) {
+function wireUpi(order) {
   document.querySelectorAll('[data-copy]').forEach((b) => b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.copy); toast('Copied'); } catch { toast(b.dataset.copy); } });
   document.querySelector('#switch-cash')?.addEventListener('click', () => customerOrderAction('switch-cash', 'Pay at the counter with cash instead?'));
   document.querySelector('#claim-paid')?.addEventListener('click', claimPaid);
   const open = document.querySelector('#upi-open');
   if (open) {
-    open.addEventListener('click', () => { C.upiOpened = true; open.innerHTML = '<span class="spinner" aria-hidden="true"></span> Opening UPI'; open.setAttribute('aria-busy', 'true'); clearTimeout(timers.hint); timers.hint = setTimeout(() => { if (document.visibilityState === 'visible') document.querySelector('#upi-hint')?.classList.remove('hidden'); }, 2500); });
-    if (launch && !C.launched) { C.launched = true; C.upiOpened = true; open.innerHTML = '<span class="spinner" aria-hidden="true"></span> Opening UPI'; open.setAttribute('aria-busy', 'true'); setTimeout(() => { window.location.href = order.upi.uri; }, 150); timers.hint = setTimeout(() => { if (document.visibilityState === 'visible') document.querySelector('#upi-hint')?.classList.remove('hidden'); }, 3000); }
+    const showFallback = () => {
+      if (document.visibilityState !== 'visible') return;
+      C.upiOpened = false;
+      document.querySelector('#upi-hint')?.classList.remove('hidden');
+      const box = document.querySelector('#paid-box');
+      if (box) { box.scrollIntoView({ behavior: 'smooth', block: 'center' }); box.classList.remove('pulse'); void box.offsetWidth; box.classList.add('pulse'); }
+    };
+    open.addEventListener('click', (event) => {
+      event.preventDefault();
+      const href = open.getAttribute('href');
+      if (!href) return;
+      C.upiOpened = true;
+      clearTimeout(timers.hint);
+      const started = Date.now();
+      window.location.href = href;
+      timers.hint = setTimeout(() => {
+        if (document.visibilityState === 'visible' && Date.now() - started > 1200) showFallback();
+      }, 1800);
+    });
   }
 }
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || !C?.upiOpened || C.order?.status !== 'pending_payment') return;
-  C.upiOpened = false; document.querySelector('#upi-hint')?.classList.add('hidden');
+  C.upiOpened = false; clearTimeout(timers.hint);
+  document.querySelector('#upi-hint')?.classList.remove('hidden');
   const box = document.querySelector('#paid-box'); if (box) { box.scrollIntoView({ behavior: 'smooth', block: 'center' }); box.classList.remove('pulse'); void box.offsetWidth; box.classList.add('pulse'); }
 });
 async function claimPaid() {
@@ -705,7 +724,7 @@ async function claimPaid() {
   catch (e) { err.textContent = /Failed to fetch|NetworkError/i.test(e.message) ? 'No connection. Nothing was sent. Tap again when you are online.' : e.message; btn.disabled = false; btn.textContent = 'I have paid'; }
 }
 async function customerOrderAction(action, question) {
-  if (!confirm(question)) return;
+  if (!(await confirmDialog({ title: question, message: action === 'cancel' ? 'It will not be printed.' : 'The shop will take cash at the counter.', confirmLabel: action === 'cancel' ? 'Cancel order' : 'Pay cash instead', cancelLabel: 'Keep as is', tone: action === 'cancel' ? 'danger' : 'primary' }))) return;
   const button = document.querySelector(action === 'switch-cash' ? '#switch-cash' : '#cancel-order'), label = button?.textContent;
   if (button) { button.disabled = true; button.innerHTML = '<span class="spinner" aria-hidden="true"></span> Updating'; }
   try { await api(`/orders/${encodeURIComponent(C.order.code)}/${action}`, jsonBody({})); const { order } = await api(`/orders/${encodeURIComponent(C.order.code)}`); showOrder(order); if (action === 'switch-cash') toast('Switched to cash. Pay at the counter.'); }

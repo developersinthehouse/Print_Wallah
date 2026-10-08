@@ -6,7 +6,7 @@ Print Wallah builds the standard NPCI `upi://pay` link from the shop's own confi
 
 `upi://pay?pa=<shop upi id>&pn=<shop name>&am=<amount>&cu=INR&tr=<order code>&tn=Print order <order code>`
 
-- Android and iOS phones open the customer's installed UPI app from the "Open UPI app" button (and automatically right after the order is created).
+- The browser sends the `upi://pay` link to the phone's operating system. The OS opens its default compatible UPI app or asks the customer to choose an installed app; the website cannot inspect installed apps or know which app was selected. If none opens, the customer can scan the QR with another phone, copy the payment details, or choose cash.
 - Desktop browsers show a QR code of the same link to scan with a phone.
 - The UPI ID and amount can also be copied, for apps that do not accept the link.
 
@@ -25,7 +25,7 @@ Practical note: some UPI apps limit or flag payments to **personal** UPI IDs whe
 
 ## Optional automatic confirmation (integration point)
 
-Set `PAYMENT_WEBHOOK_SECRET` (24+ random characters) to enable `POST /api/payments/webhook`. Any payment provider, bank notification bridge or small adapter you build can call it:
+The app has a generic signed receiver at `POST /api/payments/webhook`; **setting its secret alone does not connect a payment provider or make payments automatic**. First obtain a provider account/product that supports payment webhooks, then deploy a provider-specific adapter that verifies the provider's own signature and maps only confirmed captures to this contract. The adapter signs the exact JSON request body with `PAYMENT_WEBHOOK_SECRET` and sends:
 
 ```
 POST /api/payments/webhook
@@ -33,6 +33,6 @@ X-PW-Signature: sha256=<hex HMAC-SHA256 of the raw request body using PAYMENT_WE
 {"eventId":"unique-per-event","orderCode":"PR-...","status":"paid","amount":40.00,"currency":"INR","providerPaymentId":"..."}
 ```
 
-The server checks the signature (timing-safe), refuses repeated `eventId`s (idempotent), requires the order to be an unpaid UPI order, requires the amount to match the order exactly, and only then verifies it and queues the print job. A wrong amount returns 422 and verifies nothing. Every event is stored in `payment_events` with its outcome.
+Set `PAYMENT_WEBHOOK_SECRET` to a private random value of at least 24 characters in the server environment, then restart/redeploy. The server checks the HMAC signature with a timing-safe comparison, validates the event fields, refuses repeated `eventId`s, requires an unpaid UPI order and exact INR amount, and only then verifies payment and queues printing. Missing/invalid currency or amount precision is rejected; an amount mismatch returns 422. Every accepted signed event is recorded in `payment_events` with its outcome. Never expose this secret in the browser or send it to customers.
 
-What you must supply for this to be automatic: a provider account (for example a UPI collect/QR product with webhooks) and a small adapter that translates its webhook into the JSON above. The app does not ship a provider-specific adapter because none can be tested without your credentials.
+What you must supply for this to be automatic: the provider name/product, a merchant account with webhook support, provider credentials stored only on the server/adapter, and the adapter itself. The app does not ship a provider-specific adapter because none can be tested without your account. Until that integration is configured and tested end-to-end, keep using manual verification against the shop's actual bank/UPI statement.

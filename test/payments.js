@@ -50,7 +50,7 @@ async function main() {
   await rejectsWith(cust(`/shops/${A.shop.id}/price`, json({ uploadToken: f1.uploadToken, config: { ...cfg, pageRange: '1-9' } })), 400, /between 1 and 3/);
   await rejectsWith(cust(`/shops/${A.shop.id}/price`, json({ uploadToken: f1.uploadToken, config: { ...cfg, pageRange: '1-3-5' } })), 400);
   // A shop cannot use another shop's upload
-  await rejectsWith(cust(`/shops/${B.shop.id}/price`, json({ uploadToken: f1.uploadToken, config: cfg })), 400, /does not belong/);
+  await rejectsWith(cust(`/shops/${B.shop.id}/price`, json({ uploadToken: f1.uploadToken, config: cfg })), 400, /do(es)? not belong/);
 
   // UPI order: server amount, intent, QR, pending_payment; browser cannot inject an amount
   const o1 = await orderOf(A.shop.id, f1, 'upi', cfg, { amount: 1, price: 1 });
@@ -105,6 +105,29 @@ async function main() {
   const failed = (await adminA('/admin/orders')).find((o) => o.order_code === o2.order.code);
   assert.equal(failed.order_status, 'failed'); assert.equal(failed.print_error, 'Printer offline');
 
+  // Drag-reordering the persisted shop queue changes which job the agent claims next.
+  const queueFileA = await up(A.shop.id); const queuedOrderA = await orderOf(A.shop.id, queueFileA, 'cash');
+  const queueFileB = await up(A.shop.id); const queuedOrderB = await orderOf(A.shop.id, queueFileB, 'cash');
+  const queueRowA = (await adminA('/admin/orders')).find((o) => o.order_code === queuedOrderA.order.code);
+  const queueRowB = (await adminA('/admin/orders')).find((o) => o.order_code === queuedOrderB.order.code);
+  await adminA(`/admin/orders/${queueRowA.id}/cash-confirm`, json({}));
+  await adminA(`/admin/orders/${queueRowB.id}/cash-confirm`, json({}));
+  const queued = await adminA('/admin/print-queue');
+  assert.deepEqual(queued.map((o) => o.order_code), [queuedOrderA.order.code, queuedOrderB.order.code]);
+  const reorderedIds = queued.map((o) => o.id).reverse();
+  await rejectsWith(adminA('/admin/print-queue', { ...json({ orderIds: [reorderedIds[0], reorderedIds[0]] }), method: 'PATCH' }), 400);
+  await rejectsWith(adminB('/admin/print-queue', { ...json({ orderIds: reorderedIds }), method: 'PATCH' }), 409);
+  await adminA('/admin/print-queue', { ...json({ orderIds: reorderedIds }), method: 'PATCH' });
+  assert.deepEqual((await adminA('/admin/print-queue')).map((o) => o.order_code), [queuedOrderB.order.code, queuedOrderA.order.code]);
+  assert.equal((await cust(`/orders/${queuedOrderB.order.code}/status`)).ahead, 0);
+  assert.equal((await cust(`/orders/${queuedOrderA.order.code}/status`)).ahead, 1);
+  const prioritized = await agA('/jobs');
+  assert.equal(prioritized.job.order_code, queuedOrderB.order.code);
+  await agA(`/jobs/${prioritized.job.job_id}/result`, { method: 'POST', body: JSON.stringify({ status: 'completed' }) });
+  const next = await agA('/jobs');
+  assert.equal(next.job.order_code, queuedOrderA.order.code);
+  await agA(`/jobs/${next.job.job_id}/result`, { method: 'POST', body: JSON.stringify({ status: 'completed' }) });
+
   // Customer cancels / switches
   const f3 = await up(A.shop.id); const o3 = await orderOf(A.shop.id, f3, 'upi');
   await cust(`/orders/${o3.order.code}/switch-cash`, json({}));
@@ -124,13 +147,17 @@ async function main() {
   const f6 = await up(A.shop.id); const o6 = await orderOf(A.shop.id, f6, 'upi');
   const hook = (body, sig) => { const raw = JSON.stringify(body); return fetch(`${base}/api/payments/webhook`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PW-Signature': sig ?? sign(raw) }, body: raw }); };
   assert.equal((await hook({ eventId: `e1-${stamp}`, orderCode: o6.order.code, status: 'paid', amount: 8 }, 'sha256=00')).status, 401);
-  assert.equal((await hook({ eventId: `e2-${stamp}`, orderCode: o6.order.code, status: 'paid', amount: 1 })).status, 422);
+  assert.equal((await hook({ eventId: `missing-currency-${stamp}`, orderCode: o6.order.code, status: 'paid', amount: 8 })).status, 400);
+  assert.equal((await hook({ eventId: `non-numeric-${stamp}`, orderCode: o6.order.code, status: 'paid', amount: true, currency: 'INR' })).status, 400);
+  assert.equal((await hook({ eventId: `too-precise-${stamp}`, orderCode: o6.order.code, status: 'paid', amount: 8.001, currency: 'INR' })).status, 400);
+  assert.equal((await hook({ eventId: `x${'x'.repeat(200)}-${stamp}`, orderCode: o6.order.code, status: 'paid', amount: 8, currency: 'INR' })).status, 400);
+  assert.equal((await hook({ eventId: `e2-${stamp}`, orderCode: o6.order.code, status: 'paid', amount: 1, currency: 'INR' })).status, 422);
   assert.equal((await cust(`/orders/${o6.order.code}/status`)).payment_status, 'pending', 'wrong amount never verifies');
   const okHook = await hook({ eventId: `e3-${stamp}`, orderCode: o6.order.code, status: 'paid', amount: 8, currency: 'INR', providerPaymentId: 'PAY123456' });
   assert.equal((await okHook.json()).outcome, 'verified');
-  assert.equal((await (await hook({ eventId: `e3-${stamp}`, orderCode: o6.order.code, status: 'paid', amount: 8 })).json()).duplicate, true);
+  assert.equal((await (await hook({ eventId: `e3-${stamp}`, orderCode: o6.order.code, status: 'paid', amount: 8, currency: 'INR' })).json()).duplicate, true);
   assert.equal((await cust(`/orders/${o6.order.code}/status`)).order_status, 'print_queued');
-  assert.equal((await hook({ eventId: `e4-${stamp}`, orderCode: 'PR-NOPE', status: 'paid', amount: 8 })).status, 404);
+  assert.equal((await hook({ eventId: `e4-${stamp}`, orderCode: 'PR-NOPE', status: 'paid', amount: 8, currency: 'INR' })).status, 404);
 
   // Multi-photo sheet: two photos with quantities share sheets
   const pa = await up(B.shop.id, 'a.png', PNG, 'image/png'), pb = await up(B.shop.id, 'b.png', PNG, 'image/png');
@@ -176,7 +203,7 @@ async function main() {
   assert.equal((await fetch(base + '/api/super/shops')).status, 401);
   assert.equal((await fetch(base + '/api/admin/orders')).status, 401);
   assert.equal((await fetch(base + '/api/shops/NOPE12345/public')).status, 404);
-  console.log('Payments check passed: UPI states, server amount, idempotency, resume, claim/cancel/switch, print-queue safety, retry ids, webhook, multi-photo, validation, sessions.');
+  console.log('Payments check passed: UPI states, idempotency, queue reorder priority and customer positions, print-agent claims, webhook, retry ids, multi-photo, validation, sessions.');
 }
 
 async function cleanup() {
