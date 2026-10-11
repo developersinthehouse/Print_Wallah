@@ -98,7 +98,7 @@ async function main() {
   await assert.rejects(() => adminA('/admin/settings', { method: 'PATCH', body: JSON.stringify({ upiId: 'not-a-valid-upi' }), headers: { 'Content-Type': 'application/json' } }));
   await client()('/auth/shop/login', post({ email: shopA.shop.adminEmail, password: 'shop-admin-password-123' }));
   assert.ok(Array.isArray((await adminA('/admin/analytics?from=2026-01-01&to=2026-12-31')).rows));
-  const today = new Date().toISOString().slice(0, 10);
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date()); // analytics days are India days
   const sameDayAnalytics = (await adminA(`/admin/analytics?from=${today}&to=${today}`)).rows;
   assert.ok(sameDayAnalytics.some(row => Number(row.orders) > 0), 'analytics end date includes the entire selected day');
   const ordersA = await adminA('/admin/orders');
@@ -181,6 +181,7 @@ async function main() {
   const photoClaimResponse = await fetch(`${base}/api/agent/${shopB.shop.id}/jobs`, { headers: { Authorization: `Bearer ${shopB.agentToken}` } });
   const photoClaim = await photoClaimResponse.json();
   assert.equal(photoClaim.job.copies, 1, 'multi-photo sheet PDF itself contains the sheet count');
+  await assert.rejects(() => adminB(`/admin/orders/${photoAdminOrder.id}`, { method: 'DELETE' }), /HTTP 409/);
   const photoDocument = await fetch(`${base}${photoClaim.job.downloadUrl}`, { headers: { Authorization: `Bearer ${shopB.agentToken}` } });
   assert.equal(photoDocument.status, 200);
   assert.match(Buffer.from(await photoDocument.arrayBuffer()).toString('latin1'), /^%PDF-/, 'agent receives the composed printable photo sheet, not the source image');
@@ -206,6 +207,14 @@ async function main() {
   const cancelledAdminOrder = (await adminA('/admin/orders')).find(o => o.order_code === cancelledOrder.order.code);
   await adminA(`/admin/orders/${cancelledAdminOrder.id}/cancel`, post({}));
   assert.equal((await superAdmin(`/orders/${cancelledOrder.order.code}/status`)).order_status, 'cancelled');
+  const deleteUpload = await upload(shopA.shop.id);
+  const deleteOrder = await superAdmin(`/shops/${shopA.shop.id}/orders`, post({ uploadToken: deleteUpload.uploadToken, paymentMethod: 'cash', config: { copies: 1, color: false, paperSize: 'A4', paperType: 'normal', duplex: false } }));
+  const deleteAdminOrder = (await adminA('/admin/orders')).find(o => o.order_code === deleteOrder.order.code);
+  await assert.rejects(() => adminB(`/admin/orders/${deleteAdminOrder.id}`, { method: 'DELETE' }), /HTTP 404|HTTP 403/);
+  const deletion = await adminA(`/admin/orders/${deleteAdminOrder.id}`, { method: 'DELETE' });
+  assert.equal(deletion.ok, true);
+  assert.equal(deletion.filesCleanupWarning, false);
+  assert.equal((await adminA('/admin/orders')).some(o => o.order_code === deleteOrder.order.code), false);
   const updatedShop = await superAdmin(`/super/shops/${shopA.shop.id}`, { method: 'PATCH', body: JSON.stringify({ phone: '1234567899', pricing: { bw_a4: 3 }, upiId: 'updated@upi' }), headers: { 'Content-Type': 'application/json' } });
   assert.equal(updatedShop.shop.phone, '1234567899');
   assert.equal(updatedShop.shop.pricing.bw_a4, 3);
@@ -220,7 +229,7 @@ async function main() {
   await assert.rejects(() => superAdmin(`/shops/${shopA.shop.id}/public`));
   await superAdmin(`/super/shops/${shopA.shop.id}/extend`, post({ days: 30 }));
   assert.equal((await superAdmin(`/shops/${shopA.shop.id}/public`)).shop.id, shopA.shop.id);
-  console.log('Smoke check passed: session/auth, shop details/editing, tenant isolation, QR, PDF/image uploads, pricing, cash/UPI intent, optional reference and shop-verified payment queue, photo sheets, lock, expiry and extension.');
+  console.log('Smoke check passed: session/auth, shop details/editing, tenant isolation, order deletion, QR, PDF/image uploads, pricing, cash/UPI intent, optional reference and shop-verified payment queue, photo sheets, lock, expiry and extension.');
 }
 
 async function cleanup() {

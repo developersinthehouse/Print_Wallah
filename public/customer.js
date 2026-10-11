@@ -115,7 +115,12 @@ async function renderCustomer(shopId) {
         if (order.shopId === shop.id) {
           if (isActiveOrder(order)) {
             C.activeOrder = order; store.set(orderKey(shop.id), order.code);
-            if (explicit) { showOrder(order); return; }
+            if (explicit) {
+              const noApp = params.get('upi') === 'noapp';
+              if (noApp) history.replaceState(null, '', `${location.pathname}?order=${encodeURIComponent(order.code)}`);
+              if (noApp && order.status === 'pending_payment') { C.upiNotice = 'noapp'; C.upiFailedApp = params.get('app') || null; C.upiLast = params.get('app') || 'system chooser'; }
+              showOrder(order); return;
+            }
           } else {
             // Finished, cancelled or stale: never resurrect its screen. Show the homepage, with a one time note for a tracking link.
             store.del(orderKey(shop.id));
@@ -665,16 +670,43 @@ function showOrder(order) {
   wireUpi(order);
   if (!isTerminal(order)) startPolling(order);
 }
+const UPI_HINTS = {
+  returned: 'Did a UPI app open? This page cannot see your payment. If you paid, tap “I have paid” below. Otherwise try again, pay manually with the details below, or choose cash.',
+  noapp: 'No UPI app could be opened with the automatic method. Try one of the app buttons above, or open this page in Chrome. You can always pay manually with the details below.',
+  blocked: 'We could not prepare a safe payment link for this order. Please pay manually with the details below or choose cash.',
+};
+function upiHintText(kind) {
+  if (kind === 'noapp' && C.upiFailedApp) {
+    const all = [...(UpiLaunch.ANDROID_APPS || []), ...(UpiLaunch.IOS_APPS || [])], app = all.find((a) => a.id === C.upiFailedApp);
+    if (app) return `${app.name} could not be opened. It may not be installed, or this browser blocked it. Try another app above, open this page in Chrome, or pay manually with the details below.`;
+  }
+  return UPI_HINTS[kind] || '';
+}
+function upiDetails(plan) {
+  const lines = [`Device: ${plan.platform}`, `Browser: ${plan.browser || 'unknown'}${plan.inApp ? ' (in-app)' : ''}`, `Method: ${plan.mode === 'android-intent' ? 'Android intent' : plan.mode === 'scheme' ? 'UPI link' : 'QR only'}`, `Last attempt: ${C.upiLast || 'none'}`, `Result: ${C.upiNotice || 'none'}`];
+  return `<details class="fold" id="upi-details"><summary>${icon('info', 18)}<span>Technical details</span></summary><p class="mono">${lines.map(esc).join('<br>')}</p><button class="text-button" type="button" data-copy="${esc(lines.join('\n'))}">Copy details</button></details>`;
+}
+function upiLaunchPlan(order) {
+  const u = order.upi;
+  const fallbackUrl = `${location.origin}/shop/${encodeURIComponent(C.shop.id)}?order=${encodeURIComponent(order.code)}&upi=noapp`;
+  const pageUrl = `${location.origin}/shop/${encodeURIComponent(C.shop.id)}?order=${encodeURIComponent(order.code)}`;
+  return UpiLaunch.plan({ uri: u.uri, userAgent: navigator.userAgent, uaPlatform: navigator.userAgentData?.platform || '', maxTouchPoints: navigator.maxTouchPoints || 0, coarse: matchMedia('(pointer:coarse)').matches, fallbackUrl, pageUrl });
+}
 function upiScreen(order, head) {
-  const u = order.upi, phone = isTouchPhone(), s = C.shop;
+  const u = order.upi, s = C.shop;
   const homeBtn = `<button class="button button-light" id="back-home" type="button">Back to home</button>`;
   if (!u) return `${head('info', 'UPI link not available', 'Switch to cash or cancel this order.')}<div class="cluster mt-5"><button class="button" id="switch-cash" type="button">Pay cash instead</button>${homeBtn}</div>`;
+  const plan = upiLaunchPlan(order), phone = plan.mode !== 'qr';
   const copy = (v, label) => `<div class="copy-row"><span class="mono">${esc(v)}</span><button class="button button-light button-small" type="button" data-copy="${esc(v)}" aria-label="Copy ${label}">Copy</button></div>`;
+  const failed = Boolean(C.upiNotice);
+  const apps = plan.apps.length ? `<div class="upi-apps" role="group" aria-label="Open a specific UPI app"><span class="upi-apps-label">${failed ? 'Open a specific app' : 'Or open a specific app'}</span><div class="upi-apps-row">${plan.apps.map((a) => `<button class="button button-light" type="button" data-upi-app="${esc(a.id)}">${esc(a.name)}</button>`).join('')}</div>${failed && plan.plainUrl ? '<button class="text-button" type="button" data-upi-plain>Try the plain UPI link</button>' : ''}${failed && plan.chromeUrl ? '<button class="button button-light" type="button" data-open-chrome>Open this page in Chrome</button>' : ''}</div>` : '';
+  const inApp = plan.inApp ? `<div class="inline-notice warn" id="upi-inapp" role="status">This in-app browser may block UPI apps. If the button does nothing, open this page in ${plan.platform === 'ios' ? 'Safari' : 'Chrome'}. ${plan.chromeUrl ? '<button class="text-button" type="button" data-open-chrome>Open in Chrome</button> · ' : ''}<button class="text-button" type="button" data-copy="${esc(location.href)}">Copy page link</button></div>` : '';
   return `${head('pay', `Pay ${money(order.amount)} to ${u.payee}`, phone ? 'Opens a UPI app on your phone. Amount and shop are filled in.' : 'Scan this QR with a UPI app on your phone. Amount and shop are filled in.')}
   <div class="stack mt-5">
-  ${phone ? `<a class="button button-primary button-lg button-block" id="upi-open" href="${esc(u.uri)}">Open UPI app to pay ${money(order.amount)}</a>` : `<img class="upi-qr" src="${u.qr}" alt="UPI payment QR code for ${money(order.amount)}"><a class="button button-light button-block" id="upi-open" href="${esc(u.uri)}">Try opening a UPI app on this device</a>`}
-  <div class="inline-notice warn hidden" id="upi-hint" role="status">No UPI app opened, or you came back? This page cannot see your payment. Try again, scan the QR with another phone, pay using the details below, or choose cash.</div>
-  <details class="fold" ${phone ? '' : 'open'}><summary>${icon('pay', 18)}<span>Pay manually or scan QR</span></summary><dl class="kv" style="margin:var(--s-3) 0 0"><dt>Pay to</dt><dd>${copy(u.id, 'UPI ID')}</dd><dt>Amount</dt><dd>${copy(Number(order.amount).toFixed(2), 'amount')}</dd><dt>Note</dt><dd>${copy(order.code, 'order code')}</dd></dl>${phone ? `<img class="upi-qr" src="${u.qr}" alt="UPI payment QR code">` : ''}</details>
+  ${inApp}
+  ${phone ? `<a class="button button-primary button-lg button-block" id="upi-open" href="${esc(u.uri)}">Open UPI app to pay ${money(order.amount)}</a>${apps}` : `<img class="upi-qr" src="${u.qr}" alt="UPI payment QR code for ${money(order.amount)}"><a class="button button-light button-block" id="upi-open" href="${esc(u.uri)}">Try opening a UPI app on this device</a>`}
+  <div class="inline-notice warn ${C.upiNotice ? '' : 'hidden'}" id="upi-hint" role="status">${esc(upiHintText(C.upiNotice))}</div>${failed ? upiDetails(plan) : ''}
+  <details class="fold" id="upi-manual" ${phone && !C.upiNotice ? '' : 'open'}><summary>${icon('pay', 18)}<span>Pay manually or scan QR</span></summary><dl class="kv" style="margin:var(--s-3) 0 0"><dt>Pay to</dt><dd>${copy(u.id, 'UPI ID')}</dd><dt>Amount</dt><dd>${copy(Number(order.amount).toFixed(2), 'amount')}</dd><dt>Note</dt><dd>${copy(order.code, 'order code')}</dd></dl>${phone ? `<img class="upi-qr" src="${u.qr}" alt="UPI payment QR code">` : ''}</details>
   <div class="inset-card stack-sm" id="paid-box"><h3>After you pay</h3><p class="subtext">Come back here and tell the shop.</p>
     <div class="field"><label for="utr">UPI transaction ID (optional)</label><input id="utr" inputmode="text" autocomplete="off" maxlength="30" placeholder="Example: 412345678901"></div>
     <div class="form-error" id="claim-error" role="alert"></div>
@@ -682,38 +714,47 @@ function upiScreen(order, head) {
   <div class="cluster"><button class="button button-light" id="switch-cash" type="button">Pay cash instead</button><button class="button button-danger" id="cancel-order" type="button">Cancel order</button>${homeBtn}</div>
   <div id="live-note"></div><div class="pay-note">Tap “I have paid” only after the money has left your account.</div></div>`;
 }
+// Single seam for leaving the page towards an external app. Kept separate so it can be replaced in tests.
+function openExternal(url) { window.location.href = url; }
+function showUpiHint(kind) {
+  C.upiNotice = kind; C.upiOpened = false; clearTimeout(timers.hint);
+  // Re-render so the recovery options (specific apps, plain link, Open in Chrome, technical details) appear.
+  if (C.order?.status === 'pending_payment' && document.querySelector('#upi-open')) showOrder(C.order);
+  const hint = document.querySelector('#upi-hint'); if (!hint) return;
+  hint.textContent = upiHintText(kind); hint.classList.remove('hidden');
+  const manual = document.querySelector('#upi-manual'); if (manual) manual.open = true;
+  hint.scrollIntoView({ behavior: 'smooth', block: 'center' }); hint.classList.remove('pulse'); void hint.offsetWidth; hint.classList.add('pulse');
+}
+function launchUpi(order, url, label = 'system chooser') {
+  const check = UpiLaunch.verify(order.upi.uri, { upiId: order.upi.id, amount: order.amount, orderCode: order.code });
+  if (!check.ok) { showUpiHint('blocked'); return; }
+  if (C.launching) return;
+  C.launching = true; setTimeout(() => { C.launching = false; }, 1500);
+  C.upiOpened = true; C.upiLast = label; clearTimeout(timers.hint);
+  try { openExternal(url); } catch { showUpiHint('noapp'); return; }
+  // If this page is still in front after the hand-off, the phone did not switch to an app (none installed, blocked, or dismissed).
+  timers.hint = setTimeout(() => { if (document.visibilityState === 'visible' && C.order?.status === 'pending_payment') showUpiHint('returned'); }, 2400);
+}
 function wireUpi(order) {
   document.querySelectorAll('[data-copy]').forEach((b) => b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.copy); toast('Copied'); } catch { toast(b.dataset.copy); } });
   document.querySelector('#switch-cash')?.addEventListener('click', () => customerOrderAction('switch-cash', 'Pay at the counter with cash instead?'));
   document.querySelector('#claim-paid')?.addEventListener('click', claimPaid);
   const open = document.querySelector('#upi-open');
-  if (open) {
-    const showFallback = () => {
-      if (document.visibilityState !== 'visible') return;
-      C.upiOpened = false;
-      document.querySelector('#upi-hint')?.classList.remove('hidden');
-      const box = document.querySelector('#paid-box');
-      if (box) { box.scrollIntoView({ behavior: 'smooth', block: 'center' }); box.classList.remove('pulse'); void box.offsetWidth; box.classList.add('pulse'); }
-    };
-    open.addEventListener('click', (event) => {
-      event.preventDefault();
-      const href = open.getAttribute('href');
-      if (!href) return;
-      C.upiOpened = true;
-      clearTimeout(timers.hint);
-      const started = Date.now();
-      window.location.href = href;
-      timers.hint = setTimeout(() => {
-        if (document.visibilityState === 'visible' && Date.now() - started > 1200) showFallback();
-      }, 1800);
-    });
+  if (open && order.upi) {
+    const plan = upiLaunchPlan(order);
+    open.addEventListener('click', (event) => { event.preventDefault(); launchUpi(order, plan.url || order.upi.uri, plan.mode === 'android-intent' ? 'system chooser' : 'UPI link'); });
+    document.querySelectorAll('[data-upi-app]').forEach((b) => b.addEventListener('click', () => { const app = plan.apps.find((a) => a.id === b.dataset.upiApp); if (app) launchUpi(order, app.url, app.name); }));
+    document.querySelector('[data-upi-plain]')?.addEventListener('click', () => launchUpi(order, plan.plainUrl, 'plain link'));
+  }
+  if (order.upi) {
+    const chrome = upiLaunchPlan(order).chromeUrl;
+    document.querySelectorAll('[data-open-chrome]').forEach((b) => b.addEventListener('click', () => { C.upiLast = 'open in Chrome'; try { openExternal(chrome); } catch { toast('Open this page in Chrome manually.'); } }));
   }
 }
+// Coming back from a UPI app (or from the browser's no-app fallback): payment is never assumed, only explained.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || !C?.upiOpened || C.order?.status !== 'pending_payment') return;
-  C.upiOpened = false; clearTimeout(timers.hint);
-  document.querySelector('#upi-hint')?.classList.remove('hidden');
-  const box = document.querySelector('#paid-box'); if (box) { box.scrollIntoView({ behavior: 'smooth', block: 'center' }); box.classList.remove('pulse'); void box.offsetWidth; box.classList.add('pulse'); }
+  showUpiHint('returned');
 });
 async function claimPaid() {
   const btn = document.querySelector('#claim-paid'), err = document.querySelector('#claim-error'); if (btn.disabled) return;

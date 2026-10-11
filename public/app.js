@@ -20,7 +20,7 @@ let adminRefreshBusy = false;
 /* Load only the code this page needs: admin pages never download pdf.js or the customer flow, and vice versa. */
 const loadScript = src => new Promise((resolve, reject) => { const el = document.createElement('script'); el.src = src; el.onload = resolve; el.onerror = () => reject(new Error(`Could not load ${src}`)); document.head.appendChild(el); });
 const loadStyle = href => new Promise((resolve, reject) => { const el = document.createElement('link'); el.rel = 'stylesheet'; el.href = href; el.onload = resolve; el.onerror = () => reject(new Error(`Could not load ${href}`)); document.head.appendChild(el); });
-const modulesReady = (location.pathname.startsWith('/shop/') ? ['/vendor/pdfjs/pdf.min.js', '/photoedit.js', '/customer.js'] : ['/admin.js']).reduce((chain, src) => chain.then(() => loadScript(src)), location.pathname.startsWith('/shop/') ? Promise.resolve() : loadStyle('/admin.css'));
+const modulesReady = (location.pathname.startsWith('/shop/') ? ['/vendor/pdfjs/pdf.min.js', '/photoedit.js', '/upiLaunch.js', '/customer.js'] : ['/admin.js']).reduce((chain, src) => chain.then(() => loadScript(src)), location.pathname.startsWith('/shop/') ? Promise.resolve() : loadStyle('/admin.css'));
 
 document.addEventListener('click', e => { if (e.target.closest('[data-close-modal]')) closeModal(); if (e.target.closest('[data-reload]')) location.reload(); });
 

@@ -130,7 +130,7 @@ function openOrder(id) {
       ${o.customer_name || o.customer_phone ? `<section class="dr-sec"><h3>Customer</h3><dl class="dkv-list">${kv('Name', esc(o.customer_name || ''))}${kv('Phone', o.customer_phone ? `<a class="text-button" href="tel:${esc(String(o.customer_phone).replace(/[^\d+]/g, ''))}">${esc(o.customer_phone)}</a>` : '')}</dl></section>` : ''}
       <section class="dr-sec"><h3>Timeline</h3><dl class="dkv-list">${times.join('')}${kv('Print status', esc(o.print_status))}</dl></section>
     </div>
-    <footer class="dr-actions">${prim}${sec}<a class="button button-light" href="/api/admin/uploads/${esc(o.id)}" target="_blank" rel="noopener">${aicon('file', 18)} Open file</a></footer>
+    <footer class="dr-actions">${prim}${sec}<a class="button button-light" href="/api/admin/uploads/${esc(o.id)}" target="_blank" rel="noopener">${aicon('file', 18)} Open file</a>${actionBtn('delete', 'Delete order', 'danger', 'button-small')}</footer>
   </div>`);
 }
 document.addEventListener('click', e => {
@@ -143,6 +143,7 @@ const ORDER_ASK = {
   'payment-verify': { title: 'Payment received?', message: 'Confirm only if the exact amount reached this shop’s UPI account. The order code is in the payment note. The job is queued for printing right away.', confirmLabel: 'Yes, payment received' },
   'payment-fail': { title: 'Mark payment as not received?', message: 'The order will not be printed. Use this if the money has not arrived.', confirmLabel: 'Not received', tone: 'danger' },
   cancel: { title: 'Cancel this order?', message: 'It will not be printed. Refund any payment yourself.', confirmLabel: 'Cancel order', cancelLabel: 'Keep order', tone: 'danger' },
+  delete: { title: 'Delete this order permanently?', message: 'The order and its files will be removed from this shop. This cannot be undone and will not issue a refund.', confirmLabel: 'Delete order', cancelLabel: 'Keep order', tone: 'danger' },
 };
 async function runOrderAction(id, action, btn) {
   if (orderBusy.has(id)) return;
@@ -153,8 +154,11 @@ async function runOrderAction(id, action, btn) {
   const label = btn.innerHTML; scope.forEach(b => { b.disabled = true; }); btn.setAttribute('aria-busy', 'true'); btn.innerHTML = '<span class="spinner" aria-hidden="true"></span> Updating';
   try {
     const routeName = action === 'payment-fail' ? 'payment-verify' : action;
-    await api(`/admin/orders/${encodeURIComponent(id)}/${routeName}`, jsonBody(action === 'payment-verify' || action === 'payment-fail' ? { verified: action === 'payment-verify' } : {}));
-    toast(action === 'payment-verify' ? 'Payment verified and job queued.' : action === 'cash-confirm' ? 'Cash confirmed and job queued.' : 'Order updated.');
+    const result = action === 'delete'
+      ? await api(`/admin/orders/${encodeURIComponent(id)}`, { method: 'DELETE' })
+      : await api(`/admin/orders/${encodeURIComponent(id)}/${routeName}`, jsonBody(action === 'payment-verify' || action === 'payment-fail' ? { verified: action === 'payment-verify' } : {}));
+    if (action === 'delete') toast(result.filesCleanupWarning ? 'Order deleted, but some files could not be removed.' : 'Order deleted. No refund was issued.', result.filesCleanupWarning ? 'error' : 'success');
+    else toast(action === 'payment-verify' ? 'Payment verified and job queued.' : action === 'cash-confirm' ? 'Cash confirmed and job queued.' : 'Order updated.');
     if (modal.open) closeModal();
     await renderAdminTab({ silent: true });
   } catch (e) { toast(e.message); scope.forEach(b => { b.disabled = false; }); btn.removeAttribute('aria-busy'); btn.innerHTML = label; }

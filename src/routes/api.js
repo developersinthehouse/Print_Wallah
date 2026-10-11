@@ -518,6 +518,86 @@ router.patch('/admin/print-queue', ...admin, asyncRoute(async (req, res) => {
   }
 }));
 router.get('/admin/orders', ...admin, asyncRoute(async (req, res) => { const params = [req.user.shopId]; let where = 'o.shop_id=$1'; if (req.query.status) { params.push(String(req.query.status)); where += ' AND o.order_status=$' + params.length; } if (req.query.from) { params.push(req.query.from); where += ' AND o.created_at >= $' + params.length + '::date'; } if (req.query.to) { params.push(req.query.to); where += ' AND o.created_at < ($' + params.length + '::date + interval \'1 day\')'; } if (req.query.q) { params.push(`%${String(req.query.q).slice(0, 100)}%`); where += ' AND (o.order_code ILIKE $' + params.length + ' OR u.original_name ILIKE $' + params.length + ')'; } const { rows } = await pool.query(`SELECT o.*,u.original_name,u.mime_type,u.byte_size,j.error_message print_error,j.attempts print_attempts,j.queue_position print_queue_position FROM orders o JOIN uploads u ON u.id=o.upload_id LEFT JOIN print_jobs j ON j.order_id=o.id WHERE ${where} ORDER BY o.created_at DESC LIMIT 200`, params); res.json(rows); }));
+router.delete('/admin/orders/:orderId', ...admin, asyncRoute(async (req, res) => {
+  const shopId = req.user.shopId;
+  const client = await pool.connect();
+  const storedNames = new Set();
+  let filesCleanupWarning = false;
+  try {
+    await client.query('BEGIN');
+    await lockPrintQueue(client, shopId);
+    const { rows } = await client.query(
+      `SELECT id, order_code, order_status, print_status, payment_method, payment_status, amount,
+              upload_id, print_file_name
+       FROM orders WHERE id = $1 AND shop_id = $2 FOR UPDATE`,
+      [req.params.orderId, shopId],
+    );
+    const order = rows[0];
+    if (!order) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    if (order.order_status === 'printing' || ['claimed', 'printing'].includes(order.print_status)) {
+      throw Object.assign(new Error('An order that is currently printing cannot be deleted'), { status: 409 });
+    }
+
+    const { rows: uploads } = await client.query(
+      `SELECT id, stored_name FROM uploads WHERE id = $1
+       UNION
+       SELECT u.id, u.stored_name
+       FROM order_uploads ou JOIN uploads u ON u.id = ou.upload_id
+       WHERE ou.order_id = $2`,
+      [order.upload_id, order.id],
+    );
+    await client.query('DELETE FROM orders WHERE id = $1 AND shop_id = $2', [order.id, shopId]);
+    if (order.print_file_name) storedNames.add(order.print_file_name);
+    const uploadIds = uploads.map((upload) => upload.id);
+    if (uploadIds.length) {
+      const { rows: orphanedUploads } = await client.query(
+        `DELETE FROM uploads u
+         WHERE u.id = ANY($1::uuid[])
+           AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.upload_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM order_uploads ou WHERE ou.upload_id = u.id)
+         RETURNING stored_name`,
+        [uploadIds],
+      );
+      orphanedUploads.forEach((upload) => storedNames.add(upload.stored_name));
+    }
+    await client.query(
+      'INSERT INTO audit_log(shop_id,actor,action,details) VALUES($1,$2,$3,$4)',
+      [shopId, req.user.email, 'order.deleted', {
+        orderCode: order.order_code,
+        orderStatus: order.order_status,
+        printStatus: order.print_status,
+        paymentMethod: order.payment_method,
+        paymentStatus: order.payment_status,
+        amount: order.amount,
+      }],
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    if (error.status) return res.status(error.status).json({ error: error.message });
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  for (const storedName of storedNames) {
+    if (!isSafeStoredFilename(storedName)) {
+      console.warn(`Skipped unsafe stored filename while deleting order ${req.params.orderId}`);
+      filesCleanupWarning = true;
+      continue;
+    }
+    try {
+      await fs.promises.rm(path.join(uploadDir, storedName), { force: true });
+    } catch (error) {
+      console.error(`Could not remove stored file for deleted order ${req.params.orderId}:`, error);
+      filesCleanupWarning = true;
+    }
+  }
+  res.json({ ok: true, filesCleanupWarning });
+}));
 router.post('/admin/orders/:orderId/cash-confirm', ...admin, asyncRoute(async (req, res) => transitionOrder(req, res, 'cash-confirm')));
 router.post('/admin/orders/:orderId/payment-verify', ...admin, asyncRoute(async (req, res) => transitionOrder(req, res, 'payment-verify')));
 router.post('/admin/orders/:orderId/cancel', ...admin, asyncRoute(async (req, res) => transitionOrder(req, res, 'cancel')));

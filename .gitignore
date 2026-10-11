@@ -1,14 +1,40 @@
+# Dependencies and generated test output
 node_modules/
+coverage/
+.nyc_output/
+
+# Local credentials. Keep the safe template available to every clone.
 .env
+.env.*
+!.env.example
+
+# Runtime uploads, local database and print-agent machine state
 storage/**
 !storage/.gitkeep
 .test-postgres/
 agent/config.json
-agent/agent-state.sqlite3
-agent/print-agent.log*
-agent/__pycache__/
+agent/agent-state.sqlite3*
 test/sample.pdf
+
+# Logs and language caches
+*.log
+*.log.*
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# OS-generated files and local SumatraPDF settings/cache
 .DS_Store
+Thumbs.db
+Desktop.ini
 SumatraPDF-settings.txt
 SumatraPDF-3.6.1-64/sumatrapdfcache/

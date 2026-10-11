@@ -151,6 +151,8 @@ All of the above, plus the fixes listed in the Change Log.
 
 ## Change Log
 
+- 2026-10-11 v4.3 (UPI hand-off, second pass): direct per-app buttons (Android package intents / iOS schemes), plain-link retry, Open-in-Chrome for other browsers, per-app failure messages, technical-details panel, in-place re-render of recovery options. 43 unit tests, 43 browser checks.
+- 2026-10-11 v4.2 (UPI hand-off fix): the "Open UPI app" button now launches an Android intent URL with a browser fallback (system app chooser, no error page when no app exists), per-app links on iOS, an in-app-browser warning, a pre-launch payee/amount/reference check, a double-tap guard and explicit failure/return messages. `@` is kept literal in `pa` and order references are validated in `buildUpiUri`. New `public/upiLaunch.js` and `test/upiLaunch.test.js` (in `npm test`). Smoke test now uses the India date like the app. Payment state logic is unchanged: opening an app never marks an order paid. Details: `docs/PAYMENTS.md`.
 - 2026-10-06 v4.1 (polish round):
   - Shop Admin phone order rows show only file name, time, amount, status and the main action (full details stay in the drawer); desktop rows unchanged.
   - Super Admin Reports: range presets, live search, sort, per-shop revenue bar, tap-to-expand details (UPI/cash split, pending, failed, copy shop ID); compact header on phones.
