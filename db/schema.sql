@@ -173,6 +173,43 @@ FROM legacy_order_matches
 WHERE jobs.ctid = legacy_order_matches.row_id
   AND legacy_order_matches.match_number = 1;
 CREATE UNIQUE INDEX IF NOT EXISTS print_jobs_order_id_unique_idx ON print_jobs (order_id);
+CREATE UNIQUE INDEX IF NOT EXISTS orders_id_shop_id_unique_idx ON orders (id, shop_id);
+DO $$
+DECLARE
+  shop_constraint RECORD;
+BEGIN
+  FOR shop_constraint IN
+    SELECT conname
+    FROM pg_constraint
+    WHERE conrelid = 'print_jobs'::regclass
+      AND confrelid = 'shops'::regclass
+      AND contype = 'f'
+      AND (SELECT attnum FROM pg_attribute
+           WHERE attrelid = 'print_jobs'::regclass AND attname = 'shop_id') = ANY (conkey)
+  LOOP
+    EXECUTE format('ALTER TABLE print_jobs DROP CONSTRAINT %I', shop_constraint.conname);
+  END LOOP;
+END $$;
+UPDATE print_jobs jobs
+SET shop_id = orders.shop_id
+FROM orders
+WHERE jobs.order_id = orders.id
+  AND jobs.shop_id IS DISTINCT FROM orders.shop_id;
+DO $$
+BEGIN
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'print_jobs'::regclass
+      AND conname = 'print_jobs_order_shop_fkey'
+  ) THEN
+    ALTER TABLE print_jobs
+      ADD CONSTRAINT print_jobs_order_shop_fkey
+      FOREIGN KEY (order_id, shop_id) REFERENCES orders(id, shop_id)
+      ON DELETE CASCADE NOT VALID;
+  END IF;
+END $$;
 ALTER TABLE print_jobs ADD COLUMN IF NOT EXISTS queue_position BIGINT;
 WITH ranked AS (
   SELECT id, row_number() OVER (PARTITION BY shop_id ORDER BY created_at, id) AS position
