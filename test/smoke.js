@@ -1,10 +1,9 @@
 // End-to-end check against a running local instance with an empty/test database.
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const { Pool } = require('pg');
 const { PDFDocument } = require('pdf-lib');
 require('dotenv').config();
+const { fileStorage } = require('../src/services/fileStorage');
 const base = process.env.SMOKE_URL || 'http://127.0.0.1:3000';
 const createdShopIds = [];
 
@@ -119,6 +118,8 @@ async function main() {
   assert.match(Buffer.from(await document.arrayBuffer()).toString('latin1'), /^%PDF-/);
   const completed = await fetch(`${base}/api/agent/${shopA.shop.id}/jobs/${claimed.job.job_id}/result`, { method: 'POST', headers: { Authorization: `Bearer ${shopA.agentToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'completed' }) });
   assert.equal(completed.status, 200);
+  assert.equal((await completed.json()).filesCleanupPending, false);
+  await assert.rejects(() => adminA(`/admin/uploads/${ordersA[0].id}`), /HTTP 410/);
   assert.equal((await superAdmin(`/orders/${orderA.order.code}/status`)).order_status, 'completed');
 
   const bundleUploads = [];
@@ -153,6 +154,8 @@ async function main() {
   assert.equal(printableBundle.getPageCount(), 4, 'agent downloads a combined PDF containing every selected page');
   const bundleDone = await fetch(`${base}/api/agent/${shopA.shop.id}/jobs/${bundleClaim.job.job_id}/result`, { method: 'POST', headers: { Authorization: `Bearer ${shopA.agentToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'completed' }) });
   assert.equal(bundleDone.status, 200);
+  assert.equal((await bundleDone.json()).filesCleanupPending, false);
+  await assert.rejects(() => adminA(`/admin/uploads/${bundleAdminOrder.id}`), /HTTP 410/);
 
   const fileB = await upload(shopB.shop.id);
   const orderB = await superAdmin(`/shops/${shopB.shop.id}/orders`, post({ uploadToken: fileB.uploadToken, paymentMethod: 'upi', config: { copies: 1, color: false, paperSize: 'A4', paperType: 'normal', duplex: false } }));
@@ -185,8 +188,10 @@ async function main() {
   const photoDocument = await fetch(`${base}${photoClaim.job.downloadUrl}`, { headers: { Authorization: `Bearer ${shopB.agentToken}` } });
   assert.equal(photoDocument.status, 200);
   assert.match(Buffer.from(await photoDocument.arrayBuffer()).toString('latin1'), /^%PDF-/, 'agent receives the composed printable photo sheet, not the source image');
-  const photoDone = await fetch(`${base}/api/agent/${shopB.shop.id}/jobs/${photoClaim.job.job_id}/result`, { method: 'POST', headers: { Authorization: `Bearer ${shopB.agentToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'completed' }) });
+  const photoDone = await fetch(`${base}/api/agent/${shopB.shop.id}/jobs/${photoClaim.job.job_id}/result`, { method: 'POST', headers: { Authorization: `Bearer ${shopB.agentToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'failed', error: 'Smoke test retry path' }) });
   assert.equal(photoDone.status, 200);
+  assert.equal((await photoDone.json()).filesCleanupPending, false);
+  assert.ok((await adminB(`/admin/uploads/${photoAdminOrder.id}`)).length > 0, 'failed jobs retain the print file for retry');
   await adminB(`/admin/orders/${photoAdminOrder.id}/print-failed`, post({ reason: 'Smoke test retry path' }));
   await adminB(`/admin/orders/${photoAdminOrder.id}/retry-print`, post({}));
   const retryResponse = await fetch(`${base}/api/agent/${shopB.shop.id}/jobs`, { headers: { Authorization: `Bearer ${shopB.agentToken}` } });
@@ -194,6 +199,8 @@ async function main() {
   assert.equal(retryClaim.job.order_code, photoOrder.order.code);
   const retryDone = await fetch(`${base}/api/agent/${shopB.shop.id}/jobs/${retryClaim.job.job_id}/result`, { method: 'POST', headers: { Authorization: `Bearer ${shopB.agentToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'completed' }) });
   assert.equal(retryDone.status, 200);
+  assert.equal((await retryDone.json()).filesCleanupPending, false);
+  await assert.rejects(() => adminB(`/admin/uploads/${photoAdminOrder.id}`), /HTTP 410/);
   const rejectedUpload = await upload(shopB.shop.id);
   const rejectedOrder = await superAdmin(`/shops/${shopB.shop.id}/orders`, post({ uploadToken: rejectedUpload.uploadToken, paymentMethod: 'upi', config: { copies: 1, color: false, paperSize: 'A4', paperType: 'normal', duplex: false } }));
   await superAdmin(`/orders/${rejectedOrder.order.code}/payment-reference`, post({ reference: 'SMOKEREJECT01' }));
@@ -237,8 +244,9 @@ async function cleanup() {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined });
   try {
     const { rows: files } = await pool.query(`SELECT u.stored_name AS file_name FROM uploads u JOIN shops s ON s.id=u.shop_id WHERE s.public_id=ANY($1::text[]) UNION SELECT o.print_file_name AS file_name FROM orders o JOIN shops s ON s.id=o.shop_id WHERE s.public_id=ANY($1::text[]) AND o.print_file_name IS NOT NULL`, [createdShopIds]);
-    const uploadDir = path.resolve(process.env.UPLOAD_DIR || './storage');
-    for (const file of files) if (path.basename(file.file_name) === file.file_name) fs.rmSync(path.join(uploadDir, file.file_name), { force: true });
+    for (const file of files) {
+      try { await fileStorage.delete(file.file_name); } catch (error) { console.error(`Smoke cleanup could not delete ${file.file_name}:`, error.message); }
+    }
     await pool.query('DELETE FROM audit_log WHERE shop_id IN (SELECT id FROM shops WHERE public_id=ANY($1::text[]))', [createdShopIds]);
     await pool.query('DELETE FROM orders WHERE shop_id IN (SELECT id FROM shops WHERE public_id=ANY($1::text[]))', [createdShopIds]);
     await pool.query('DELETE FROM shops WHERE public_id=ANY($1::text[])', [createdShopIds]);

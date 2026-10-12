@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { test } = require('node:test');
 const { cleanupCompletedOrderFiles } = require('../src/services/retention');
+const { createFileStorage } = require('../src/services/fileStorage');
 
 function makePool(order, sourceNames, photoNames) {
   return {
@@ -12,7 +13,7 @@ function makePool(order, sourceNames, photoNames) {
         async query(sql, values) {
           if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
           if (sql.includes('SELECT id, upload_id, print_file_name')) {
-            return order.orderStatus !== 'completed' || order.filesDeletedAt || order.completedAt > values[0] ? { rows: [] } : { rows: [{
+            return order.orderStatus !== 'completed' || order.filesDeletedAt || (values[0] && values[0] !== order.id) ? { rows: [] } : { rows: [{
               id: order.id,
               upload_id: order.uploadId,
               print_file_name: order.printFileName,
@@ -33,7 +34,7 @@ function makePool(order, sourceNames, photoNames) {
   };
 }
 
-test('completed order files are removed after ten minutes while order metadata remains', async () => {
+test('completed order files are removed immediately while order metadata remains', async () => {
   const uploadDir = await fs.mkdtemp(path.join(os.tmpdir(), 'print-wallah-retention-'));
   const now = new Date('2026-10-02T12:10:01.000Z');
   const names = ['source.pdf', 'photo-2.jpg', 'photo-sheet.pdf'];
@@ -47,23 +48,24 @@ test('completed order files are removed after ten minutes while order metadata r
   };
   try {
     await Promise.all(names.map((name) => fs.writeFile(path.join(uploadDir, name), 'print test data')));
+    const storage = createFileStorage({ environment: { UPLOAD_DIR: uploadDir } });
     const pool = makePool(order, ['source.pdf'], ['photo-2.jpg']);
     const result = await cleanupCompletedOrderFiles({
       pool,
-      uploadDir,
+      storage,
       now,
     });
 
     assert.deepEqual(result, { ordersDeleted: 1, filesDeleted: 3 });
     assert.equal(order.filesDeletedAt.toISOString(), now.toISOString());
     for (const name of names) await assert.rejects(fs.stat(path.join(uploadDir, name)), { code: 'ENOENT' });
-    assert.deepEqual(await cleanupCompletedOrderFiles({ pool, uploadDir, now }), { ordersDeleted: 0, filesDeleted: 0 });
+    assert.deepEqual(await cleanupCompletedOrderFiles({ pool, storage, now }), { ordersDeleted: 0, filesDeleted: 0 });
   } finally {
     await fs.rm(uploadDir, { recursive: true, force: true });
   }
 });
 
-test('completed-order cleanup does not delete files before the ten-minute boundary', async () => {
+test('completed-order cleanup deletes files without a retention delay', async () => {
   const uploadDir = await fs.mkdtemp(path.join(os.tmpdir(), 'print-wallah-retention-'));
   const now = new Date('2026-10-02T12:09:59.000Z');
   const order = {
@@ -76,15 +78,16 @@ test('completed-order cleanup does not delete files before the ten-minute bounda
   };
   try {
     await fs.writeFile(path.join(uploadDir, 'source.pdf'), 'print test data');
+    const storage = createFileStorage({ environment: { UPLOAD_DIR: uploadDir } });
     const result = await cleanupCompletedOrderFiles({
       pool: makePool(order, ['source.pdf'], []),
-      uploadDir,
+      storage,
       now,
     });
 
-    assert.deepEqual(result, { ordersDeleted: 0, filesDeleted: 0 });
-    assert.equal(order.filesDeletedAt, null);
-    assert.equal(await fs.readFile(path.join(uploadDir, 'source.pdf'), 'utf8'), 'print test data');
+    assert.deepEqual(result, { ordersDeleted: 1, filesDeleted: 1 });
+    assert.equal(order.filesDeletedAt.toISOString(), now.toISOString());
+    await assert.rejects(fs.stat(path.join(uploadDir, 'source.pdf')), { code: 'ENOENT' });
   } finally {
     await fs.rm(uploadDir, { recursive: true, force: true });
   }
@@ -103,9 +106,10 @@ test('failed orders retain their files for retry', async () => {
   };
   try {
     await fs.writeFile(path.join(uploadDir, 'source.pdf'), 'retry data');
+    const storage = createFileStorage({ environment: { UPLOAD_DIR: uploadDir } });
     const result = await cleanupCompletedOrderFiles({
       pool: makePool(order, ['source.pdf'], []),
-      uploadDir,
+      storage,
       now,
     });
 
@@ -131,9 +135,10 @@ test('unsafe stored filenames are never deleted and do not block completed-order
   try {
     await fs.writeFile(outsidePath, 'must not be deleted');
     await fs.writeFile(path.join(uploadDir, 'safe.pdf'), 'safe file');
+    const storage = createFileStorage({ environment: { UPLOAD_DIR: uploadDir } });
     const result = await cleanupCompletedOrderFiles({
       pool: makePool(order, ['../retention-unsafe-test.txt', 'safe.pdf'], []),
-      uploadDir,
+      storage,
       now,
     });
 
@@ -143,7 +148,7 @@ test('unsafe stored filenames are never deleted and do not block completed-order
     assert.equal(await fs.readFile(outsidePath, 'utf8'), 'must not be deleted');
     assert.deepEqual(await cleanupCompletedOrderFiles({
       pool: makePool(order, ['../retention-unsafe-test.txt', 'safe.pdf'], []),
-      uploadDir,
+      storage,
       now,
     }), { ordersDeleted: 0, filesDeleted: 0 });
   } finally {

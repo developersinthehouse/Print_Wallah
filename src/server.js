@@ -12,7 +12,8 @@ const { cleanupCompletedOrderFiles } = require('./services/retention');
 const jwt = require('jsonwebtoken');
 const { lanAddresses } = require('./services/network');
 const { webhookEnabled } = require('./services/webhook');
-const { isSafeStoredFilename } = require('./services/storagePolicy');
+const { hasPersistentUploadDirectory, isSafeStoredFilename } = require('./services/storagePolicy');
+const { fileStorage } = require('./services/fileStorage');
 
 const production = process.env.NODE_ENV === 'production';
 const limiter = (limit, options = {}) => rateLimit({ windowMs: 15 * 60 * 1000, limit, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many requests. Please wait a few minutes and try again.' }, ...options });
@@ -20,24 +21,52 @@ const limiter = (limit, options = {}) => rateLimit({ windowMs: 15 * 60 * 1000, l
 function requireConfig() {
   if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) throw new Error('JWT_SECRET must be set and contain at least 32 characters');
   if (!String(process.env.SUPER_ADMIN_EMAIL || '').trim() || !String(process.env.SUPER_ADMIN_PASSWORD || '')) throw new Error('SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD must be set in .env (restart the server after editing .env)');
+  if (production && !hasPersistentUploadDirectory()) throw new Error('Production file storage must use configured Cloudflare R2 credentials or an absolute persistent UPLOAD_DIR');
 }
 
 async function main() {
   requireConfig();
   await initialize();
-  const uploadDir = path.resolve(process.env.UPLOAD_DIR || './storage');
-  fs.mkdirSync(uploadDir, { recursive: true });
+  if (fileStorage.provider === 'local') fs.mkdirSync(fileStorage.directory, { recursive: true });
   const cleanupUploads = async () => {
-    const { rows } = await pool.query(`DELETE FROM uploads u WHERE u.expires_at<now() AND NOT EXISTS(SELECT 1 FROM orders o WHERE o.upload_id=u.id) AND NOT EXISTS(SELECT 1 FROM order_uploads x WHERE x.upload_id=u.id) RETURNING stored_name`);
-    const safeRows = rows.filter((row) => isSafeStoredFilename(row.stored_name));
-    for (const row of safeRows) fs.rmSync(path.join(uploadDir, row.stored_name), { force: true });
-    if (safeRows.length !== rows.length) console.warn(`Skipped ${rows.length - safeRows.length} expired upload row(s) with unsafe stored filenames`);
-    if (rows.length) console.log(`Removed ${safeRows.length} expired unclaimed upload(s)`);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        `SELECT u.id, u.stored_name
+         FROM uploads u
+         WHERE u.expires_at < now()
+           AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.upload_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM order_uploads x WHERE x.upload_id = u.id)
+         ORDER BY u.expires_at, u.id
+         LIMIT 100
+         FOR UPDATE OF u SKIP LOCKED`,
+      );
+      const removedIds = [];
+      for (const row of rows) {
+        if (!isSafeStoredFilename(row.stored_name)) {
+          console.warn(`Skipped expired upload ${row.id} with an unsafe stored filename`);
+          continue;
+        }
+        await fileStorage.delete(row.stored_name);
+        removedIds.push(row.id);
+      }
+      if (removedIds.length) {
+        await client.query('DELETE FROM uploads WHERE id = ANY($1::uuid[])', [removedIds]);
+        console.log(`Removed ${removedIds.length} expired unclaimed upload(s)`);
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   };
   cleanupUploads().catch(error => console.error('Upload cleanup failed:', error.message));
   const cleanupTimer = setInterval(() => cleanupUploads().catch(error => console.error('Upload cleanup failed:', error.message)), 60 * 60 * 1000);
   cleanupTimer.unref();
-  const cleanupCompletedFiles = () => cleanupCompletedOrderFiles({ pool, uploadDir })
+  const cleanupCompletedFiles = () => cleanupCompletedOrderFiles({ pool, storage: fileStorage })
     .then(({ ordersDeleted }) => { if (ordersDeleted) console.log(`Deleted print files for ${ordersDeleted} completed order(s)`); })
     .catch(error => console.error('Completed-order file cleanup failed:', error?.stack || error));
   cleanupCompletedFiles();

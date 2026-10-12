@@ -119,6 +119,9 @@ function openOrder(id) {
     ? [kv('Type', 'Photo sheet'), kv('Paper', `${esc(c.paperSize || 'A4')} · ${esc(c.paperType || 'normal')}`), kv('Photos', `${esc(c.photoQuantity ?? '')} (${esc(c.photoSize || '')})`), kv('Sheets', esc(o.page_count)), kv('Copies', esc(o.copies))]
     : [kv('Type', 'Documents / pictures'), kv('Colour', c.color ? 'Colour' : 'Black & white'), kv('Paper', `${esc(c.paperSize || 'A4')} · ${esc(c.paperType || 'normal')}`), kv('Sides', c.duplex ? 'Double-sided' : 'Single-sided'), kv('Orientation', esc(c.orientation || 'portrait')), kv('Pages', c.pageRange && c.pageRange !== 'all' ? esc(c.pageRange) : 'All'), kv('Pages to print', esc(o.page_count)), kv('Copies', esc(o.copies)), kv('Scaling', esc(scaling))];
   const times = [kv('Placed', esc(dateTime(o.created_at))), kv('Customer marked paid', o.payment_claimed_at ? esc(dateTime(o.payment_claimed_at)) : ''), kv('Payment confirmed', o.confirmed_at ? esc(dateTime(o.confirmed_at)) : ''), kv('Completed', o.completed_at ? esc(dateTime(o.completed_at)) : ''), kv('Print file removed', o.files_deleted_at ? esc(dateTime(o.files_deleted_at)) : '')];
+  const fileAction = o.files_deleted_at
+    ? '<span class="a-sub">Print file deleted</span>'
+    : `<a class="button button-light" href="/api/admin/uploads/${esc(o.id)}" target="_blank" rel="noopener">${aicon('file', 18)} Open file</a>`;
   const sec = secondaryActions(o, ''), prim = primaryAction(o, '');
   showDrawer(`<div class="dr" data-order="${esc(o.id)}">
     <header class="dr-head"><div class="dr-id"><div class="dr-kicker">Order <button type="button" class="code-copy mono" data-copy="${esc(o.order_code)}" aria-label="Copy order code">${esc(o.order_code)} ${aicon('copy', 14)}</button></div><h2 class="dr-title">${esc(files ? `${files.length} files` : orderName(o))}</h2></div><button type="button" class="icon-button" data-close-modal aria-label="Close">${aicon('close')}</button></header>
@@ -130,7 +133,7 @@ function openOrder(id) {
       ${o.customer_name || o.customer_phone ? `<section class="dr-sec"><h3>Customer</h3><dl class="dkv-list">${kv('Name', esc(o.customer_name || ''))}${kv('Phone', o.customer_phone ? `<a class="text-button" href="tel:${esc(String(o.customer_phone).replace(/[^\d+]/g, ''))}">${esc(o.customer_phone)}</a>` : '')}</dl></section>` : ''}
       <section class="dr-sec"><h3>Timeline</h3><dl class="dkv-list">${times.join('')}${kv('Print status', esc(o.print_status))}</dl></section>
     </div>
-    <footer class="dr-actions">${prim}${sec}<a class="button button-light" href="/api/admin/uploads/${esc(o.id)}" target="_blank" rel="noopener">${aicon('file', 18)} Open file</a>${actionBtn('delete', 'Delete order', 'danger', 'button-small')}</footer>
+    <footer class="dr-actions">${prim}${sec}${fileAction}${actionBtn('delete', 'Delete order', 'danger', 'button-small')}</footer>
   </div>`);
 }
 document.addEventListener('click', e => {

@@ -1,7 +1,6 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const multer = require('multer');
-const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const pdfParse = require('pdf-parse');
@@ -17,14 +16,14 @@ const { webhookEnabled, verifySignature } = require('../services/webhook');
 const { baseUrl } = require('../services/network');
 const { parseAnalyticsRange, queryPlatformAnalytics, queryShopAnalytics } = require('../services/reports');
 const { hasPersistentUploadDirectory, isSafeStoredFilename } = require('../services/storagePolicy');
+const { fileStorage } = require('../services/fileStorage');
+const { cleanupCompletedOrderFiles } = require('../services/retention');
 
 const router = express.Router();
-const uploadDir = path.resolve(process.env.UPLOAD_DIR || './storage');
 const MAX_DOCUMENT_BUNDLE_FILES = 10;
 const MAX_DOCUMENT_BUNDLE_BYTES = 100 * 1024 * 1024;
-fs.mkdirSync(uploadDir, { recursive: true });
 const upload = multer({
-  storage: multer.diskStorage({ destination: uploadDir, filename: (_req, file, cb) => cb(null, `${crypto.randomUUID()}${path.extname(file.originalname).toLowerCase()}`) }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: Number(process.env.MAX_UPLOAD_MB || 30) * 1024 * 1024, files: 1 },
   fileFilter: (_req, file, cb) => ['application/pdf', 'image/jpeg', 'image/png'].includes(file.mimetype) ? cb(null, true) : cb(new Error('Upload a PDF, JPG, or PNG file')),
 });
@@ -153,8 +152,9 @@ router.post('/super/shops', ...owner, asyncRoute(async (req, res) => {
   const passwordHash = await bcrypt.hash(String(b.adminPassword), 12);
   const pricing = validatePricing(b.pricing || {});
   const printConfig = validatePrintConfig(b.printConfig || {});
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     await client.query('BEGIN');
     const { rows } = await client.query(`INSERT INTO shops(public_id,name,owner_name,phone,email,address,city,admin_email,admin_password_hash,pricing,print_config,upi_id,upi_name,access_start,access_end,agent_token_hash)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now(),now()+($14||' days')::interval,$15) RETURNING *`,
@@ -254,31 +254,35 @@ router.get('/shops/:shopId/public', asyncRoute(async (req, res) => {
   res.json({ shop: publicShopView(shop) });
 }));
 router.post('/shops/:shopId/uploads', (req, res, next) => {
-  if (!hasPersistentUploadDirectory()) return res.status(503).json({ error: 'Persistent upload storage is not configured. Set UPLOAD_DIR to the mounted disk path.' });
+  if (!hasPersistentUploadDirectory()) return res.status(503).json({ error: 'Persistent file storage is not configured. Configure Cloudflare R2 or a persistent UPLOAD_DIR.' });
   return next();
 }, upload.single('document'), asyncRoute(async (req, res) => {
-  const drop = () => { if (req.file) fs.rmSync(req.file.path, { force: true }); };
-  const shop = await findShop(req.params.shopId); if (!shop) { drop(); return res.status(404).json({ error: 'Shop portal not found' }); }
-  if (!isActive(shop)) { drop(); return res.status(423).json({ error: `Shop is ${statusOf(shop)}` }); }
+  const shop = await findShop(req.params.shopId); if (!shop) return res.status(404).json({ error: 'Shop portal not found' });
+  if (!isActive(shop)) return res.status(423).json({ error: `Shop is ${statusOf(shop)}` });
   if (!req.file) return res.status(400).json({ error: 'Choose a document to upload' });
-  const bytes = fs.readFileSync(req.file.path); const mime = detectMime(bytes);
-  if (mime !== req.file.mimetype) { drop(); return res.status(400).json({ error: 'The file contents do not match the selected file type' }); }
+  const bytes = req.file.buffer; const mime = detectMime(bytes);
+  if (mime !== req.file.mimetype) return res.status(400).json({ error: 'The file contents do not match the selected file type' });
   let pages = 1, width = null, height = null;
   if (mime === 'application/pdf') {
     try { const parsed = await pdfParse(Uint8Array.from(bytes)); pages = parsed.numpages; if (!Number.isInteger(pages) || pages < 1 || pages > 2000) throw new Error('PDF must contain 1 to 2000 pages'); }
-    catch (e) { console.error('PDF analysis rejected an upload:', e.message); drop(); return res.status(400).json({ error: e.message.includes('PDF must contain') ? e.message : 'Could not read this PDF. It may be damaged or password protected. Export or save it again and retry.' }); }
+    catch (e) { console.error('PDF analysis rejected an upload:', e.message); return res.status(400).json({ error: e.message.includes('PDF must contain') ? e.message : 'Could not read this PDF. It may be damaged or password protected. Export or save it again and retry.' }); }
   } else {
     const size = imageSize(bytes);
-    if (!size || size.width < 1 || size.height < 1) { drop(); return res.status(400).json({ error: 'Could not read this image. Try saving it again as JPG or PNG.' }); }
-    if (size.width > 12000 || size.height > 12000 || size.width * size.height > 100e6) { drop(); return res.status(400).json({ error: 'This image is too large to print. Reduce it to under 12000 pixels on each side.' }); }
+    if (!size || size.width < 1 || size.height < 1) return res.status(400).json({ error: 'Could not read this image. Try saving it again as JPG or PNG.' });
+    if (size.width > 12000 || size.height > 12000 || size.width * size.height > 100e6) return res.status(400).json({ error: 'This image is too large to print. Reduce it to under 12000 pixels on each side.' });
     ({ width, height } = size);
   }
   const publicToken = token();
+  const storedName = `${crypto.randomUUID()}${path.extname(req.file.originalname).toLowerCase()}`;
+  await fileStorage.put(storedName, bytes, mime);
   try {
     const { rows } = await pool.query(`INSERT INTO uploads(public_token,shop_id,original_name,stored_name,mime_type,byte_size,page_count,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '2 hours') RETURNING id,page_count,byte_size`,
-      [publicToken, shop.id, path.basename(req.file.originalname).slice(0, 200), path.basename(req.file.filename), mime, req.file.size, pages]);
+      [publicToken, shop.id, path.basename(req.file.originalname).slice(0, 200), storedName, mime, req.file.size, pages]);
     res.status(201).json({ uploadToken: publicToken, fileName: path.basename(req.file.originalname), mimeType: mime, size: rows[0].byte_size, pages: rows[0].page_count, width, height });
-  } catch (e) { drop(); throw e; }
+  } catch (e) {
+    try { await fileStorage.delete(storedName); } catch (cleanupError) { console.error(`Could not clean up failed upload ${storedName}:`, cleanupError); }
+    throw e;
+  }
 }));
 router.post('/shops/:shopId/price', asyncRoute(async (req, res) => {
   const shop = await findShop(req.params.shopId); if (!shop) return res.status(404).json({ error: 'Shop not found' });
@@ -312,19 +316,24 @@ router.post('/shops/:shopId/orders', asyncRoute(async (req, res) => {
   const orderStatus = b.paymentMethod === 'cash' ? 'cash_confirmation_pending' : 'pending_payment';
   const documentBundle = config.mode !== 'photo' && items.length > 1;
   const printFileName = config.mode === 'photo' || documentBundle ? `${crypto.randomUUID()}-${documentBundle ? 'document-bundle' : 'photo-sheet'}.pdf` : null;
+  let printFileBytes = null;
   if (printFileName) {
     try {
-      const outputPath = path.join(uploadDir, printFileName);
-      if (documentBundle) await createDocumentBundle(items, outputPath, config, uploadDir);
-      else await createPhotoPrintFile(items, outputPath, config);
+      if (documentBundle) {
+        const bundle = await createDocumentBundle(items, config, fileStorage);
+        printFileBytes = bundle.bytes;
+      } else {
+        printFileBytes = await createPhotoPrintFile(items, config, fileStorage);
+      }
     } catch (e) {
       console.error('Printable PDF preparation failed:', e.message);
-      fs.rmSync(path.join(uploadDir, printFileName), { force: true });
       return res.status(400).json({ error: documentBundle ? 'Could not combine these files into one print document.' : 'Could not prepare these photos for a photo sheet. Try different JPG or PNG files.' });
     }
+    await fileStorage.put(printFileName, printFileBytes, 'application/pdf');
   }
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     await client.query('BEGIN');
     if (items.length > 1) { const { rows: taken } = await client.query('SELECT 1 FROM order_uploads WHERE upload_id = ANY($1) UNION SELECT 1 FROM orders WHERE upload_id = ANY($1)', [items.map((x) => x.upload.id)]); if (taken.length) throw Object.assign(new Error('One of these uploads is already part of another order. Upload the files again.'), { status: 409 }); }
     const { rows } = await client.query(`INSERT INTO orders(order_code,shop_id,upload_id,print_file_name,customer_name,customer_phone,config,page_count,copies,amount,payment_method,payment_status,order_status,print_status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',$12,'not_ready') RETURNING *`,
@@ -337,11 +346,14 @@ router.post('/shops/:shopId/orders', asyncRoute(async (req, res) => {
     await client.query('COMMIT');
     res.status(201).json({ order: await orderView(rows[0], shop, { withQr: true }) });
   } catch (e) {
-    await client.query('ROLLBACK'); if (printFileName) fs.rmSync(path.join(uploadDir, printFileName), { force: true });
+    if (client) await client.query('ROLLBACK');
+    if (printFileName) {
+      try { await fileStorage.delete(printFileName); } catch (cleanupError) { console.error(`Could not clean up unclaimed print file ${printFileName}:`, cleanupError); }
+    }
     if (e.code === '23505') { const { rows: again } = await pool.query(`SELECT o.* FROM orders o JOIN uploads u ON u.id=o.upload_id WHERE u.public_token=$1 AND o.shop_id=$2`, [String(b.uploadToken || ''), shop.id]); if (again[0]) return res.status(200).json({ order: await orderView(again[0], shop, { withQr: true }), resumed: true }); return res.status(409).json({ error: 'This upload already has an order. Upload the file again to start another order.' }); }
     if (e.status) return res.status(e.status).json({ error: e.message });
     throw e;
-  } finally { client.release(); }
+  } finally { client?.release(); }
 }));
 
 // Order lookup by its unguessable code: full view for resuming checkout after a refresh or after returning from a UPI app.
@@ -590,9 +602,9 @@ router.delete('/admin/orders/:orderId', ...admin, asyncRoute(async (req, res) =>
       continue;
     }
     try {
-      await fs.promises.rm(path.join(uploadDir, storedName), { force: true });
+      await fileStorage.delete(storedName);
     } catch (error) {
-      console.error(`Could not remove stored file for deleted order ${req.params.orderId}:`, error);
+      console.error(`Could not remove stored object ${storedName} for deleted order ${req.params.orderId}:`, error);
       filesCleanupWarning = true;
     }
   }
@@ -611,7 +623,20 @@ router.get('/admin/analytics', ...admin, asyncRoute(async (req, res) => {
 }));
 router.patch('/admin/settings', ...admin, asyncRoute(async (req, res) => { const b = req.body; const { rows } = await pool.query('SELECT * FROM shops WHERE id=$1', [req.user.shopId]); const shop = rows[0]; const pc = b.printConfig ? validatePrintConfig(b.printConfig) : shop.print_config; const pricing = b.pricing ? validatePricing(b.pricing) : shop.pricing; const upiId = 'upiId' in b ? normalizeUpiId(b.upiId) : shop.upi_id; if (upiId && !isValidUpiId(upiId)) return res.status(400).json({ error: 'Enter a valid UPI ID such as shopname@bank' }); const upiName = 'upiName' in b ? (String(b.upiName || '').trim().slice(0, 60) || null) : shop.upi_name; const { rows: updated } = await pool.query('UPDATE shops SET name=$2,owner_name=$3,phone=$4,email=$5,address=$6,city=$7,upi_id=$8,upi_name=$9,pricing=$10,print_config=$11,agent_name=$12 WHERE id=$1 RETURNING *', [shop.id, b.name ?? shop.name, b.ownerName ?? shop.owner_name, b.phone ?? shop.phone, b.email ?? shop.email, b.address ?? shop.address, b.city ?? shop.city, upiId, upiName, pricing, pc, b.agentName ?? shop.agent_name]); await audit(shop.id, req.user.email, 'shop.settings.updated', { fields: Object.keys(b) }); res.json({ shop: safeShop(updated[0]) }); }));
 router.post('/admin/agent/rotate', ...admin, asyncRoute(async (req, res) => { const value = token(); await pool.query('UPDATE shops SET agent_token_hash=$2 WHERE id=$1', [req.user.shopId, sha256(value)]); res.json({ agentToken: value }); }));
-router.get('/admin/uploads/:orderId', ...admin, asyncRoute(async (req, res) => { const { rows } = await pool.query(`SELECT u.stored_name,u.original_name,o.print_file_name FROM uploads u JOIN orders o ON o.upload_id=u.id WHERE o.id=$1 AND o.shop_id=$2`, [req.params.orderId, req.user.shopId]); if (!rows[0]) return res.status(404).json({ error: 'Document not found' }); const file = rows[0].print_file_name || rows[0].stored_name; if (!isSafeStoredFilename(file)) return res.status(400).json({ error: 'Document filename is invalid' }); const target = path.join(uploadDir, file); if (!fs.existsSync(target)) return res.status(410).json({ error: 'This file is no longer stored on the server' }); res.download(target, rows[0].print_file_name ? `photo-sheet-${req.params.orderId.slice(0, 8)}.pdf` : rows[0].original_name); }));
+router.get('/admin/uploads/:orderId', ...admin, asyncRoute(async (req, res) => {
+  const { rows } = await pool.query(`SELECT u.stored_name,u.original_name,u.mime_type,o.print_file_name FROM uploads u JOIN orders o ON o.upload_id=u.id WHERE o.id=$1 AND o.shop_id=$2`, [req.params.orderId, req.user.shopId]);
+  if (!rows[0]) return res.status(404).json({ error: 'Document not found' });
+  const storedName = rows[0].print_file_name || rows[0].stored_name;
+  if (!isSafeStoredFilename(storedName)) return res.status(400).json({ error: 'Document filename is invalid' });
+  let bytes;
+  try { bytes = await fileStorage.get(storedName); }
+  catch (error) {
+    if (error.code === 'ENOENT') return res.status(410).json({ error: 'This file is no longer stored on the server' });
+    throw error;
+  }
+  const downloadName = rows[0].print_file_name ? `photo-sheet-${req.params.orderId.slice(0, 8)}.pdf` : rows[0].original_name;
+  res.set('Cache-Control', 'private, no-store').type(rows[0].print_file_name ? 'application/pdf' : rows[0].mime_type).attachment(downloadName).send(bytes);
+}));
 
 // Local print-agent API. A claim creates a lease and is atomic across agents.
 router.post('/agent/:shopId/heartbeat', asyncRoute(async (req, res) => { const shop = await agentShop(req); if (!shop) return res.status(401).json({ error: 'Invalid print-agent token' }); await pool.query('UPDATE shops SET agent_name=$2,agent_last_seen=now() WHERE id=$1', [shop.id, String(req.body.agentName || 'Print agent').slice(0, 100)]); res.json({ ok: true, serverTime: new Date().toISOString() }); }));
@@ -679,11 +704,57 @@ router.get('/agent/:shopId/jobs', asyncRoute(async (req, res) => {
     client.release();
   }
 }));
-router.get('/agent/:shopId/jobs/:jobId/document', asyncRoute(async (req, res) => { const shop = await agentShop(req); if (!shop) return res.status(401).json({ error: 'Invalid print-agent token' }); const { rows } = await pool.query(`SELECT COALESCE(o.print_file_name,u.stored_name) stored_name,COALESCE(o.print_file_name,u.original_name) original_name FROM print_jobs j JOIN orders o ON o.id=j.order_id JOIN uploads u ON u.id=o.upload_id WHERE j.id=$1 AND j.shop_id=$2 AND j.claimed_by='print-agent' AND j.status IN ('claimed','printing')`, [req.params.jobId, shop.id]); if (!rows[0]) return res.status(404).json({ error: 'Claimed job not found' }); if (!isSafeStoredFilename(rows[0].stored_name)) return res.status(400).json({ error: 'Document filename is invalid' }); res.download(path.join(uploadDir, rows[0].stored_name), rows[0].original_name); }));
-router.post('/agent/:shopId/jobs/:jobId/result', asyncRoute(async (req, res) => { const shop = await agentShop(req); if (!shop) return res.status(401).json({ error: 'Invalid print-agent token' }); const status = req.body.status; if (!['completed', 'failed'].includes(status)) return res.status(400).json({ error: 'Result must be completed or failed' }); const client = await pool.connect(); try { await client.query('BEGIN'); const { rows } = await client.query(`SELECT j.*,o.id order_id FROM print_jobs j JOIN orders o ON o.id=j.order_id WHERE j.id=$1 AND j.shop_id=$2 AND j.claimed_by='print-agent' AND j.status='claimed' FOR UPDATE OF j`, [req.params.jobId, shop.id]); if (!rows[0]) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Job lease is no longer active' }); } const errorMessage = status === 'failed' ? String(req.body.error || 'Printer command failed').slice(0, 1000) : null; await client.query('UPDATE print_jobs SET status=$2,error_message=$3 WHERE id=$1', [rows[0].id, status, errorMessage]); await client.query('UPDATE orders SET print_status=$2,order_status=$3,completed_at=CASE WHEN $2=\'completed\' THEN now() ELSE completed_at END WHERE id=$1', [rows[0].order_id, status, status === 'completed' ? 'completed' : 'failed']); await client.query('COMMIT'); res.json({ ok: true }); } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); } }));
+router.get('/agent/:shopId/jobs/:jobId/document', asyncRoute(async (req, res) => {
+  const shop = await agentShop(req);
+  if (!shop) return res.status(401).json({ error: 'Invalid print-agent token' });
+  const { rows } = await pool.query(`SELECT COALESCE(o.print_file_name,u.stored_name) stored_name,COALESCE(o.print_file_name,u.original_name) original_name FROM print_jobs j JOIN orders o ON o.id=j.order_id JOIN uploads u ON u.id=o.upload_id WHERE j.id=$1 AND j.shop_id=$2 AND j.claimed_by='print-agent' AND j.status IN ('claimed','printing')`, [req.params.jobId, shop.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'Claimed job not found' });
+  if (!isSafeStoredFilename(rows[0].stored_name)) return res.status(400).json({ error: 'Document filename is invalid' });
+  let bytes;
+  try { bytes = await fileStorage.get(rows[0].stored_name); }
+  catch (error) {
+    if (error.code === 'ENOENT') return res.status(410).json({ error: 'Print file is no longer available' });
+    throw error;
+  }
+  res.set('Cache-Control', 'private, no-store').attachment(rows[0].original_name).send(bytes);
+}));
+router.post('/agent/:shopId/jobs/:jobId/result', asyncRoute(async (req, res) => {
+  const shop = await agentShop(req);
+  if (!shop) return res.status(401).json({ error: 'Invalid print-agent token' });
+  const status = req.body.status;
+  if (!['completed', 'failed'].includes(status)) return res.status(400).json({ error: 'Result must be completed or failed' });
+  const client = await pool.connect();
+  let completedOrderId = null;
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(`SELECT j.*,o.id order_id FROM print_jobs j JOIN orders o ON o.id=j.order_id WHERE j.id=$1 AND j.shop_id=$2 AND j.claimed_by='print-agent' AND j.status='claimed' FOR UPDATE OF j`, [req.params.jobId, shop.id]);
+    if (!rows[0]) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Job lease is no longer active' }); }
+    const errorMessage = status === 'failed' ? String(req.body.error || 'Printer command failed').slice(0, 1000) : null;
+    await client.query('UPDATE print_jobs SET status=$2,error_message=$3 WHERE id=$1', [rows[0].id, status, errorMessage]);
+    await client.query('UPDATE orders SET print_status=$2,order_status=$3,completed_at=CASE WHEN $2=\'completed\' THEN now() ELSE completed_at END WHERE id=$1', [rows[0].order_id, status, status === 'completed' ? 'completed' : 'failed']);
+    if (status === 'completed') completedOrderId = rows[0].order_id;
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+  let filesCleanupPending = false;
+  if (completedOrderId) {
+    try {
+      await cleanupCompletedOrderFiles({ pool, storage: fileStorage, orderId: completedOrderId });
+    } catch (error) {
+      filesCleanupPending = true;
+      console.error(`Immediate print-file deletion failed for completed order ${completedOrderId}; background cleanup will retry:`, error);
+    }
+  }
+  res.json({ ok: true, filesCleanupPending });
+}));
 
 async function transitionOrder(req, res, action) {
   const shopId = req.user.shopId; const id = req.params.orderId; const client = await pool.connect();
+  let completed = false;
   try {
     await client.query('BEGIN'); await lockPrintQueue(client, shopId); const { rows } = await client.query('SELECT * FROM orders WHERE id=$1 AND shop_id=$2 FOR UPDATE', [id, shopId]); const order = rows[0]; if (!order) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Order not found' }); }
     if (action === 'cash-confirm') {
@@ -695,14 +766,20 @@ async function transitionOrder(req, res, action) {
     } else if (action === 'cancel') {
       if (['completed', 'printing', 'cancelled'].includes(order.order_status)) throw Object.assign(new Error('This order cannot be cancelled in its current state'), { status: 409 }); await client.query(`DELETE FROM print_jobs WHERE order_id=$1 AND status='queued'`, [id]); await client.query(`UPDATE orders SET print_status='not_ready',order_status='cancelled',payment_status=CASE WHEN payment_status='pending' THEN 'cancelled' ELSE payment_status END WHERE id=$1`, [id]); await client.query(`UPDATE payments SET status='cancelled' WHERE order_id=$1 AND status='pending'`, [id]);
     } else if (action === 'print-failed') {
-      if (order.files_deleted_at) throw Object.assign(new Error('Print files were deleted after the 10-minute retention period and cannot be retried'), { status: 409 });
+      if (order.files_deleted_at) throw Object.assign(new Error('Print files were deleted after successful printing and cannot be retried'), { status: 409 });
       if (!['claimed', 'printing', 'failed', 'completed'].includes(order.print_status)) throw Object.assign(new Error('Only jobs that are printing, failed or completed can be marked failed'), { status: 409 }); await client.query(`UPDATE print_jobs SET status='failed',error_message=$2 WHERE order_id=$1`, [id, String(req.body.reason || 'Marked failed by shop admin').slice(0, 1000)]); await client.query(`UPDATE orders SET order_status='failed',print_status='failed' WHERE id=$1`, [id]);
     } else if (action === 'retry-print') {
       if (order.order_status !== 'failed' || order.payment_status !== 'verified') throw Object.assign(new Error('Only paid, failed orders can be requeued'), { status: 409 }); await requeuePrintJob(client, order); await client.query(`UPDATE orders SET order_status='print_queued',print_status='queued' WHERE id=$1`, [id]);
     } else if (action === 'complete') {
-      const done = await client.query(`UPDATE orders SET order_status='completed',print_status='completed',completed_at=now() WHERE id=$1 AND order_status='printing'`, [id]); if (!done.rowCount) throw Object.assign(new Error('Only an order that is printing can be marked complete'), { status: 409 }); await client.query(`UPDATE print_jobs SET status='completed' WHERE order_id=$1`, [id]);
+      const done = await client.query(`UPDATE orders SET order_status='completed',print_status='completed',completed_at=now() WHERE id=$1 AND order_status='printing'`, [id]); if (!done.rowCount) throw Object.assign(new Error('Only an order that is printing can be marked complete'), { status: 409 }); await client.query(`UPDATE print_jobs SET status='completed' WHERE order_id=$1`, [id]); completed = true;
     }
-    await client.query('INSERT INTO audit_log(shop_id,actor,action,details) VALUES($1,$2,$3,$4)', [shopId, req.user.email, `order.${action}`, { orderCode: order.order_code }]); const { rows: updated } = await client.query('SELECT * FROM orders WHERE id=$1', [id]); await client.query('COMMIT'); res.json({ order: updated[0] });
+    await client.query('INSERT INTO audit_log(shop_id,actor,action,details) VALUES($1,$2,$3,$4)', [shopId, req.user.email, `order.${action}`, { orderCode: order.order_code }]); const { rows: updated } = await client.query('SELECT * FROM orders WHERE id=$1', [id]); await client.query('COMMIT');
+    let filesCleanupPending = false;
+    if (completed) {
+      try { await cleanupCompletedOrderFiles({ pool, storage: fileStorage, orderId: id }); }
+      catch (error) { filesCleanupPending = true; console.error(`Immediate print-file deletion failed for completed order ${id}; background cleanup will retry:`, error); }
+    }
+    res.json({ order: updated[0], filesCleanupPending });
   } catch (e) { await client.query('ROLLBACK'); if (e.status) return res.status(e.status).json({ error: e.message }); throw e; } finally { client.release(); }
 }
 async function lockPrintQueue(client, shopId) { await client.query("SELECT pg_advisory_xact_lock(hashtext('print-wallah-queue'), hashtext($1))", [String(shopId)]); }
@@ -867,37 +944,39 @@ async function prepareOrder(shop, body, { forQuote = false } = {}) {
   return { file, items, config, pages, quote, forQuote };
 }
 
-function createPhotoPrintFile(items, outputPath, config) {
-  return new Promise((resolve, reject) => {
-    const cm = 72 / 2.54, g = photoGeometry(config.photoSize, config.paperSize, config.orientation);
-    const margin = g.marginCm * cm, gap = g.gapCm * cm;
-    const photoW = g.widthCm * cm, photoH = g.heightCm * cm, cellW = g.cellWidthCm * cm, cellH = g.cellHeightCm * cm;
-    const pageOptions = { size: config.paperSize, layout: config.orientation, margins: { top: 0, right: 0, bottom: 0, left: 0 } };
-    const doc = new PDFDocument({ ...pageOptions, compress: true }), out = fs.createWriteStream(outputPath);
-    let settled = false;
-    const finish = (error) => { if (settled) return; settled = true; if (error) { fs.rmSync(outputPath, { force: true }); reject(error); } else resolve(); };
-    out.on('finish', () => finish()); out.on('error', finish); doc.on('error', finish); doc.pipe(out);
-    try {
-      let index = 0;
-      for (const item of items) {
-        if (!isSafeStoredFilename(item.upload.stored_name)) throw new Error('Uploaded image has an invalid stored filename');
-        for (let n = 0; n < item.quantity; n++, index++) {
-          const page = Math.floor(index / g.capacity);
-          if (page > 0 && index % g.capacity === 0) doc.addPage(pageOptions);
-          const slot = index % g.capacity, col = slot % g.columns, row = Math.floor(slot / g.columns);
-          const x = margin + col * (cellW + gap), y = margin + row * (cellH + gap);
-          const imagePath = path.join(uploadDir, item.upload.stored_name);
-          const box = config.photoFit === 'contain' ? { fit: [photoW, photoH] } : { cover: [photoW, photoH] };
-          doc.save();
-          if (g.rotated) { doc.translate(x + cellW, y); doc.rotate(90); doc.image(imagePath, 0, 0, { ...box, align: 'center', valign: 'center' }); }
-          else doc.image(imagePath, x, y, { ...box, align: 'center', valign: 'center' });
-          doc.restore();
-          doc.rect(x, y, cellW, cellH).lineWidth(0.4).strokeColor('#8a8f8a').stroke(); // hairline cut guide
-        }
-      }
-      doc.end();
-    } catch (error) { finish(error); }
+async function createPhotoPrintFile(items, config, storage) {
+  const imageBuffers = await Promise.all(items.map(async (item) => {
+    if (!isSafeStoredFilename(item.upload.stored_name)) throw new Error('Uploaded image has an invalid stored filename');
+    return storage.get(item.upload.stored_name);
+  }));
+  const cm = 72 / 2.54, g = photoGeometry(config.photoSize, config.paperSize, config.orientation);
+  const margin = g.marginCm * cm, gap = g.gapCm * cm;
+  const photoW = g.widthCm * cm, photoH = g.heightCm * cm, cellW = g.cellWidthCm * cm, cellH = g.cellHeightCm * cm;
+  const pageOptions = { size: config.paperSize, layout: config.orientation, margins: { top: 0, right: 0, bottom: 0, left: 0 } };
+  const doc = new PDFDocument({ ...pageOptions, compress: true });
+  const chunks = [];
+  const output = new Promise((resolve, reject) => {
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
   });
+  let index = 0;
+  for (const [itemIndex, item] of items.entries()) {
+    for (let n = 0; n < item.quantity; n++, index++) {
+      const page = Math.floor(index / g.capacity);
+      if (page > 0 && index % g.capacity === 0) doc.addPage(pageOptions);
+      const slot = index % g.capacity, col = slot % g.columns, row = Math.floor(slot / g.columns);
+      const x = margin + col * (cellW + gap), y = margin + row * (cellH + gap);
+      const box = config.photoFit === 'contain' ? { fit: [photoW, photoH] } : { cover: [photoW, photoH] };
+      doc.save();
+      if (g.rotated) { doc.translate(x + cellW, y); doc.rotate(90); doc.image(imageBuffers[itemIndex], 0, 0, { ...box, align: 'center', valign: 'center' }); }
+      else doc.image(imageBuffers[itemIndex], x, y, { ...box, align: 'center', valign: 'center' });
+      doc.restore();
+      doc.rect(x, y, cellW, cellH).lineWidth(0.4).strokeColor('#8a8f8a').stroke();
+    }
+  }
+  doc.end();
+  return output;
 }
 
 // Reads pixel dimensions from PNG/JPEG headers so absurd images are rejected before they reach the PDF renderer.

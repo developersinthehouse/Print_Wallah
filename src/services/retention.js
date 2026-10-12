@@ -1,12 +1,8 @@
-const fs = require('node:fs/promises');
-const path = require('node:path');
 const { isSafeStoredFilename } = require('./storagePolicy');
 
-const PRINT_FILE_RETENTION_MS = 10 * 60 * 1000;
 const CLEANUP_BATCH_SIZE = 100;
 
-async function cleanupCompletedOrderFiles({ pool, uploadDir, now = new Date() }) {
-  const cutoff = new Date(now.getTime() - PRINT_FILE_RETENTION_MS);
+async function cleanupCompletedOrderFiles({ pool, storage, orderId = null, now = new Date() }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -14,12 +10,12 @@ async function cleanupCompletedOrderFiles({ pool, uploadDir, now = new Date() })
       `SELECT id, upload_id, print_file_name
        FROM orders
        WHERE order_status = 'completed'
-         AND completed_at <= $1
          AND files_deleted_at IS NULL
+         AND ($1::uuid IS NULL OR id = $1)
        ORDER BY completed_at, id
        LIMIT $2
        FOR UPDATE SKIP LOCKED`,
-      [cutoff, CLEANUP_BATCH_SIZE],
+      [orderId, CLEANUP_BATCH_SIZE],
     );
 
     let deletedFiles = 0;
@@ -42,7 +38,7 @@ async function cleanupCompletedOrderFiles({ pool, uploadDir, now = new Date() })
           skippedUnsafeFiles += 1;
           continue;
         }
-        await fs.rm(path.join(uploadDir, storedName), { force: true });
+        await storage.delete(storedName);
         deletedFiles += 1;
       }
 
@@ -65,4 +61,4 @@ async function cleanupCompletedOrderFiles({ pool, uploadDir, now = new Date() })
   }
 }
 
-module.exports = { cleanupCompletedOrderFiles, PRINT_FILE_RETENTION_MS };
+module.exports = { cleanupCompletedOrderFiles };

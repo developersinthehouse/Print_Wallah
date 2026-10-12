@@ -9,6 +9,10 @@ function isSafeStoredFilename(value) {
 }
 
 function hasPersistentUploadDirectory(environment = process.env) {
+  if (environment.STORAGE_PROVIDER === 'r2') {
+    return ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET_NAME']
+      .every((key) => typeof environment[key] === 'string' && environment[key].trim() !== '');
+  }
   if (environment.NODE_ENV !== 'production') return true;
   return typeof environment.UPLOAD_DIR === 'string' &&
     environment.UPLOAD_DIR.trim() !== '' &&

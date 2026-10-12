@@ -13,8 +13,15 @@ Copy `.env.example` to `.env` locally. On Render, add the same values under the 
 | `SUPER_ADMIN_EMAIL` | Yes | Email used to sign in to the platform owner account. | `owner@example.com` |
 | `SUPER_ADMIN_PASSWORD` | Yes | Long unique password for the platform owner. | `use-a-password-manager` |
 | `DEFAULT_ACCESS_DAYS` | No | Initial shop access duration. Defaults to 30 days. | `30` |
-| `UPLOAD_DIR` | No locally; required persistent path in production | Private folder for uploaded print files. On Render, set this to a mounted persistent disk path. | `./storage` |
+| `STORAGE_PROVIDER` | No locally; set to `r2` for Cloudflare | Selects `local` (default) or Cloudflare R2. Production requires R2 or persistent local storage. | `r2` |
+| `R2_ACCOUNT_ID` | Required for R2 | Cloudflare account ID; the app builds the private S3-compatible endpoint from this value. | Set privately |
+| `R2_ACCESS_KEY_ID` | Required for R2 | Access key ID from an R2 API token scoped to the bucket. | Set privately |
+| `R2_SECRET_ACCESS_KEY` | Required for R2 | Secret access key shown when creating the R2 API token. | Set privately |
+| `R2_BUCKET_NAME` | Required for R2 | Exact name of the private R2 bucket. | `print-wallah-files` |
+| `UPLOAD_DIR` | No for R2; required persistent path for production local storage | Private local folder for uploaded print files. | `./storage` |
 | `MAX_UPLOAD_MB` | No | Upload size limit. Defaults to 30 MB. | `30` |
 | `PAYMENT_WEBHOOK_SECRET` | No | Private HMAC secret (24+ random characters) for the generic payment webhook receiver. It does not connect a provider by itself; a provider-specific adapter is still required. | Set privately; see [payment setup](PAYMENTS.md) |
 
 The shop UPI ID and payee name are set per shop in Super Admin or Shop Admin settings. Keep `PAYMENT_WEBHOOK_SECRET` unset until a trusted, provider-specific adapter is ready. Never put provider secrets in frontend code or share them in chat.
+
+With R2, the bucket stays private. Customer browsers and shop computers fetch files through the authenticated application; they do not need a public bucket URL or bucket CORS configuration. See [Cloudflare R2 deployment](DEPLOYMENT.md#cloudflare-r2-setup).

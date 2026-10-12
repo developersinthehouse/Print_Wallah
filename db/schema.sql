@@ -89,7 +89,7 @@ CREATE INDEX IF NOT EXISTS payments_shop_idx ON payments (shop_id, created_at DE
 CREATE SEQUENCE IF NOT EXISTS print_queue_position_seq;
 CREATE TABLE IF NOT EXISTS print_jobs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  order_id UUID NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
+  order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
   shop_id UUID NOT NULL REFERENCES shops(id),
   queue_position BIGINT,
   status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','claimed','printing','completed','failed')),
@@ -100,6 +100,26 @@ CREATE TABLE IF NOT EXISTS print_jobs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Upgrade databases that already had a print_jobs table before it stored an order foreign key.
+ALTER TABLE print_jobs
+  ADD COLUMN IF NOT EXISTS order_id UUID REFERENCES orders(id) ON DELETE CASCADE;
+WITH legacy_order_matches AS (
+  SELECT jobs.ctid AS row_id,
+         orders.id AS order_id,
+         row_number() OVER (
+           PARTITION BY orders.id
+           ORDER BY jobs.ctid
+         ) AS match_number
+  FROM print_jobs jobs
+  JOIN orders ON to_jsonb(jobs)->>'order_code' = orders.order_code
+  WHERE jobs.order_id IS NULL
+)
+UPDATE print_jobs jobs
+SET order_id = legacy_order_matches.order_id
+FROM legacy_order_matches
+WHERE jobs.ctid = legacy_order_matches.row_id
+  AND legacy_order_matches.match_number = 1;
+CREATE UNIQUE INDEX IF NOT EXISTS print_jobs_order_id_unique_idx ON print_jobs (order_id);
 ALTER TABLE print_jobs ADD COLUMN IF NOT EXISTS queue_position BIGINT;
 WITH ranked AS (
   SELECT id, row_number() OVER (PARTITION BY shop_id ORDER BY created_at, id) AS position
