@@ -193,6 +193,20 @@ BEGIN
     AND column_name = 'shop_id';
 
   IF shop_id_type <> 'uuid' THEN
+    UPDATE print_jobs jobs
+    SET shop_id = orders.shop_id::text
+    FROM orders
+    WHERE jobs.order_id = orders.id;
+
+    UPDATE print_jobs jobs
+    SET shop_id = shops.id::text
+    FROM shops
+    WHERE jobs.shop_id::text = shops.public_id;
+
+    UPDATE print_jobs
+    SET shop_id = substring(btrim(shop_id::text) FROM 4)
+    WHERE btrim(shop_id::text) ~* '^pw_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+
     ALTER TABLE print_jobs
       ALTER COLUMN shop_id TYPE UUID USING NULLIF(btrim(shop_id::text), '')::UUID;
   END IF;
