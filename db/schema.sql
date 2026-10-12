@@ -109,6 +109,7 @@ ALTER TABLE print_jobs
   ADD COLUMN IF NOT EXISTS claimed_by TEXT,
   ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS error_message TEXT;
+ALTER TABLE print_jobs ALTER COLUMN id SET DEFAULT gen_random_uuid();
 WITH legacy_order_matches AS (
   SELECT jobs.ctid AS row_id,
          orders.id AS order_id,
