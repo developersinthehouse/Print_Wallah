@@ -27,7 +27,6 @@ function when(v) { if (!v) return '—'; const s = (Date.now() - new Date(v)) / 
 function skeleton(rows = 4) { return `<div class="skel-list" aria-hidden="true">${Array.from({ length: rows }, () => '<div class="skel"><i></i><i></i><i></i></div>').join('')}</div><span class="sr-only">Loading</span>`; }
 function emptyState(ic, title, text = '') { return `<div class="a-empty">${aicon(ic, 28)}<strong>${esc(title)}</strong>${text ? `<span>${esc(text)}</span>` : ''}</div>`; }
 function printerState(s) { const seen = s?.agentLastSeen ? new Date(s.agentLastSeen) : null; const online = Boolean(seen && Date.now() - seen < 90000); return { online, known: Boolean(seen), label: online ? 'Printer online' : seen ? 'Printer offline' : 'Printer not connected', detail: seen ? `${s.agentName ? `${s.agentName} · ` : ''}last seen ${when(s.agentLastSeen)}` : 'Install the print agent on the shop computer' }; }
-function setShellMode(on) { document.body.classList.toggle('is-admin', Boolean(on)); }
 
 /* ---------- shared shell ---------- */
 const SHOP_TABS = [['overview', 'Overview', 'home'], ['orders', 'Orders', 'orders'], ['analytics', 'Reports', 'chart'], ['settings', 'Settings', 'settings']];

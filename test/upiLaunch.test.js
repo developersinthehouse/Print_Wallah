@@ -27,6 +27,17 @@ test('UPI link: payee, amount, currency and references are present and correctly
   assert.deepEqual([p.pa, p.pn, p.am, p.cu, p.tr, p.tn], ['sharmaprint@okaxis', 'Sharma Xerox', '12.50', 'INR', 'PR-MV2UQUXZ-C1E2D4E575', 'Print order PR-MV2UQUXZ-C1E2D4E575']);
 });
 
+test('UPI parser accepts both authority and path forms of the pay endpoint', () => {
+  const uri = link();
+  for (const alternate of [uri.replace('upi://pay?', 'upi:/pay?'), uri.replace('upi://pay?', 'upi:///pay?')]) {
+    assert.deepEqual(U.parseUpiUri(alternate), U.parseUpiUri(uri));
+  }
+});
+
+test('UPI link uses a non-empty payee name when the shop has none', () => {
+  assert.equal(U.parseUpiUri(link({ payeeName: '' })).pn, 'Print Shop');
+});
+
 test('UPI link: two shops never share a payee, and the amount is always two decimals', () => {
   const a = U.parseUpiUri(link({ upiId: 'shopa@okaxis', amount: 10 })), b = U.parseUpiUri(link({ upiId: 'shopb@ybl', amount: 7.1 }));
   assert.equal(a.pa, 'shopa@okaxis'); assert.equal(b.pa, 'shopb@ybl');

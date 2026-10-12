@@ -6,7 +6,8 @@ const { createAgentLeaseRouter } = require('../src/routes/agentLease');
 
 const TOKEN = 'test-agent-lease-token';
 const SHOP_PUBLIC_ID = 'SHOPPUBLIC1';
-const SHOP_ID = 'shop-internal-id';
+const SHOP_ID = '11111111-1111-4111-8111-111111111111';
+const JOB_ID = '22222222-2222-4222-8222-222222222222';
 let leaseActive = true;
 let leaseUpdates = 0;
 let server;
@@ -21,9 +22,9 @@ const pool = {
         : { rows: [] };
     }
     if (sql.includes('UPDATE print_jobs')) {
-      if (!leaseActive || values[0] !== 'job-1' || values[1] !== SHOP_ID) return { rows: [] };
+      if (!leaseActive || values[0] !== JOB_ID || values[1] !== SHOP_ID) return { rows: [] };
       leaseUpdates += 1;
-      return { rows: [{ id: 'job-1' }] };
+      return { rows: [{ id: JOB_ID }] };
     }
     if (sql.includes('UPDATE shops')) return { rows: [] };
     throw new Error(`Unexpected query: ${sql}`);
@@ -44,16 +45,22 @@ after(async () => {
 });
 
 test('agent token renews only an active lease belonging to its shop', async () => {
-  const missingToken = await fetch(`${baseUrl}/api/agent/${SHOP_PUBLIC_ID}/jobs/job-1/heartbeat`, { method: 'POST' });
+  const invalidJobId = await fetch(`${baseUrl}/api/agent/${SHOP_PUBLIC_ID}/jobs/not-a-uuid/heartbeat`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${TOKEN}` },
+  });
+  assert.equal(invalidJobId.status, 400);
+
+  const missingToken = await fetch(`${baseUrl}/api/agent/${SHOP_PUBLIC_ID}/jobs/${JOB_ID}/heartbeat`, { method: 'POST' });
   assert.equal(missingToken.status, 401);
 
-  const otherShop = await fetch(`${baseUrl}/api/agent/OTHER/jobs/job-1/heartbeat`, {
+  const otherShop = await fetch(`${baseUrl}/api/agent/OTHER/jobs/${JOB_ID}/heartbeat`, {
     method: 'POST',
     headers: { authorization: `Bearer ${TOKEN}` },
   });
   assert.equal(otherShop.status, 401);
 
-  const renewed = await fetch(`${baseUrl}/api/agent/${SHOP_PUBLIC_ID}/jobs/job-1/heartbeat`, {
+  const renewed = await fetch(`${baseUrl}/api/agent/${SHOP_PUBLIC_ID}/jobs/${JOB_ID}/heartbeat`, {
     method: 'POST',
     headers: { authorization: `Bearer ${TOKEN}` },
   });
@@ -62,7 +69,7 @@ test('agent token renews only an active lease belonging to its shop', async () =
   assert.equal(leaseUpdates, 1);
 
   leaseActive = false;
-  const expired = await fetch(`${baseUrl}/api/agent/${SHOP_PUBLIC_ID}/jobs/job-1/heartbeat`, {
+  const expired = await fetch(`${baseUrl}/api/agent/${SHOP_PUBLIC_ID}/jobs/${JOB_ID}/heartbeat`, {
     method: 'POST',
     headers: { authorization: `Bearer ${TOKEN}` },
   });

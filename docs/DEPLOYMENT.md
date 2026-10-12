@@ -39,7 +39,7 @@ The app uses `PutObject` for each uploaded file and each generated print PDF, an
 - `NODE_ENV=production`
 - `APP_URL=https://your-service.onrender.com` (replace with the actual deployed URL)
 - `DATABASE_URL` = the Render database's internal URL
-- `DATABASE_SSL=false` for the Render internal network unless Render currently instructs otherwise; use `true` for TLS-required external connections
+- For Render internal connections, follow the database's current SSL instructions. For external TLS connections, prefer `DATABASE_SSL=strict` when the provider certificate is publicly verifiable; use `true` only when the provider requires TLS but its certificate cannot be verified by Node.js.
 - Either Cloudflare R2 variables above, or `UPLOAD_DIR=/var/data/print-wallah` (must match an attached persistent disk mount path)
 - `JWT_SECRET`, `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_PASSWORD` = private values set in Render, never in source control
 

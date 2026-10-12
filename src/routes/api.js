@@ -8,13 +8,13 @@ const QRCode = require('qrcode');
 const PDFDocument = require('pdfkit');
 const { createDocumentBundle } = require('../services/documentBundle');
 const { pool } = require('../db');
-const { issue, authenticate, role } = require('../middleware/auth');
+const { issue, authenticate, role, cookieOptions } = require('../middleware/auth');
 const { OPTIONAL_PRICING_KEYS, DEFAULT_PRICING, DEFAULT_PRINT_CONFIG, isActive, statusOf, calculatePrice, publicId, orderCode, token, sha256 } = require('../services/core');
 const { audit } = require('../services/audit');
 const { isValidUpiId, normalizeUpiId, buildUpiUri, upiQr } = require('../services/upi');
 const { webhookEnabled, verifySignature } = require('../services/webhook');
 const { baseUrl } = require('../services/network');
-const { parseAnalyticsRange, queryPlatformAnalytics, queryShopAnalytics } = require('../services/reports');
+const { parseAnalyticsRange, validDateString, queryPlatformAnalytics, queryShopAnalytics } = require('../services/reports');
 const { hasPersistentUploadDirectory, isSafeStoredFilename } = require('../services/storagePolicy');
 const { fileStorage } = require('../services/fileStorage');
 const { cleanupCompletedOrderFiles } = require('../services/retention');
@@ -32,8 +32,8 @@ const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next
 const auth = authenticate;
 const ensureActiveShop = asyncRoute(async (req, res, next) => {
   const { rows } = await pool.query('SELECT * FROM shops WHERE id=$1', [req.user.shopId]);
-  if (!rows[0]) { res.clearCookie('session', { path: '/' }); return res.status(401).json({ error: 'Shop account no longer exists. Please sign in again.' }); }
-  if (req.user.pv !== sessionStamp(rows[0])) { res.clearCookie('session', { path: '/' }); return res.status(401).json({ error: 'Your login details changed. Please sign in again.' }); }
+  if (!rows[0]) { res.clearCookie('session', cookieOptions()); return res.status(401).json({ error: 'Shop account no longer exists. Please sign in again.' }); }
+  if (req.user.pv !== sessionStamp(rows[0])) { res.clearCookie('session', cookieOptions()); return res.status(401).json({ error: 'Your login details changed. Please sign in again.' }); }
   if (!isActive(rows[0])) return res.status(423).json({ error: `Shop access is ${statusOf(rows[0])}` });
   next();
 });
@@ -64,6 +64,13 @@ function validatePricing(pricing) {
   for (const [key, value] of Object.entries(out)) if (!/^[a-z0-9_]+$/.test(key) || !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100000) throw Object.assign(new Error(`Invalid price: ${key}`), { status: 400 });
   return out;
 }
+function pricingFromBody(body, existing = {}) {
+  const pricing = { ...existing, ...(body.pricing || {}) };
+  for (const key of OPTIONAL_PRICING_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(body, key)) pricing[key] = body[key];
+  }
+  return validatePricing(pricing);
+}
 function validatePrintConfig(value) {
   if (value && (typeof value !== 'object' || Array.isArray(value))) throw Object.assign(new Error('Printing configuration must be an object'), { status: 400 });
   const config = { ...DEFAULT_PRINT_CONFIG, ...value };
@@ -82,9 +89,13 @@ router.get('/session', asyncRoute(async (req, res) => {
   if (!req.user) return res.json({ user: null });
   if (req.user.role === 'super_admin') return res.json({ user: { role: 'super_admin', email: req.user.email } });
   if (req.user.role !== 'shop_admin') return res.json({ user: null });
-  const { rows } = await pool.query('SELECT public_id,name FROM shops WHERE id=$1', [req.user.shopId]);
-  if (!rows[0]) { res.clearCookie('session', { path: '/' }); return res.json({ user: null }); }
-  res.json({ user: { role: 'shop_admin', shopId: rows[0].public_id, email: req.user.email, shopName: rows[0].name } });
+  const { rows } = await pool.query('SELECT * FROM shops WHERE id=$1', [req.user.shopId]);
+  const shop = rows[0];
+  if (!shop || !isActive(shop) || req.user.pv !== sessionStamp(shop)) {
+    res.clearCookie('session', cookieOptions());
+    return res.json({ user: null });
+  }
+  res.json({ user: { role: 'shop_admin', shopId: shop.public_id, email: req.user.email, shopName: shop.name } });
 }));
 router.post('/auth/super/login', asyncRoute(async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
@@ -114,21 +125,11 @@ router.get('/super/overview', ...owner, asyncRoute(async (_req, res) => {
     FROM shops`);
   const { rows: orders } = await pool.query(`SELECT count(*)::int total,
     count(*) FILTER (WHERE created_at::date=current_date)::int today,
-    coalesce(sum((config->>'billablePages')::int),0)::int pages,
+    coalesce(sum(NULLIF(config->>'billablePages','')::numeric),0)::int pages,
     coalesce(sum(amount) FILTER (WHERE payment_method='upi' AND payment_status='verified'),0)::numeric(12,2) verified_revenue
     FROM orders`);
   const { rows: recent } = await pool.query(`SELECT o.order_code,o.amount,o.order_status,o.created_at,s.name shop_name FROM orders o JOIN shops s ON s.id=o.shop_id ORDER BY o.created_at DESC LIMIT 8`);
   res.json({ shops: rows[0], orders: orders[0], recent });
-}));
-router.get('/super/analytics', ...owner, asyncRoute(async (req, res) => {
-  const range = parseAnalyticsRange(req.query);
-  const shops = await queryPlatformAnalytics(pool, range);
-  res.json({ groupBy: range.groupBy, timeZone: range.timeZone, from: range.from, to: range.to, shops });
-}));
-router.get('/admin/analytics', ...admin, asyncRoute(async (req, res) => {
-  const range = parseAnalyticsRange(req.query);
-  const rows = await queryShopAnalytics(pool, req.user.shopId, range);
-  res.json({ groupBy: range.groupBy, timeZone: range.timeZone, from: range.from, to: range.to, rows });
 }));
 router.get('/super/analytics', ...owner, asyncRoute(async (req, res) => {
   const range = parseAnalyticsRange(req.query);
@@ -150,22 +151,28 @@ router.post('/super/shops', ...owner, asyncRoute(async (req, res) => {
   if (upiId && !isValidUpiId(upiId)) return res.status(400).json({ error: 'Enter a valid UPI ID such as shopname@bank' });
   const id = publicId(); const agentToken = token();
   const passwordHash = await bcrypt.hash(String(b.adminPassword), 12);
-  const pricing = validatePricing(b.pricing || {});
+  const pricing = pricingFromBody(b);
   const printConfig = validatePrintConfig(b.printConfig || {});
   let client;
+  let inTransaction = false;
   try {
     client = await pool.connect();
     await client.query('BEGIN');
+    inTransaction = true;
     const { rows } = await client.query(`INSERT INTO shops(public_id,name,owner_name,phone,email,address,city,admin_email,admin_password_hash,pricing,print_config,upi_id,upi_name,access_start,access_end,agent_token_hash)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now(),now()+($14||' days')::interval,$15) RETURNING *`,
       [id, String(b.name).trim(), String(b.ownerName).trim(), String(b.phone).trim(), b.email || null, String(b.address).trim(), String(b.city).trim(), String(b.adminEmail).trim().toLowerCase(), passwordHash, pricing, printConfig, upiId, String(b.upiName || '').trim().slice(0, 60) || null, String(days), sha256(agentToken)]);
     await client.query('INSERT INTO audit_log(shop_id,actor,action,details) VALUES($1,$2,$3,$4)', [rows[0].id, req.user.email, 'shop.created', { publicId: id }]);
-    await client.query('COMMIT');
     const customerUrl = `${baseUrl(req)}/shop/${encodeURIComponent(id)}`;
     const qr = await QRCode.toDataURL(customerUrl, { errorCorrectionLevel: 'H', margin: 2, width: 480 });
+    await client.query('COMMIT');
+    inTransaction = false;
     res.status(201).json({ shop: safeShop(rows[0]), customerUrl, qr, agentToken });
-  } catch (error) { await client.query('ROLLBACK'); if (error.code === '23505') return res.status(409).json({ error: 'A shop already uses that admin email' }); throw error; }
-  finally { client.release(); }
+  } catch (error) {
+    if (client && inTransaction) await client.query('ROLLBACK');
+    if (error.code === '23505') return res.status(409).json({ error: 'A shop already uses that admin email' });
+    throw error;
+  } finally { client?.release(); }
 }));
 router.get('/super/shops/:shopId', ...owner, asyncRoute(async (req, res) => {
   const shop = await findShop(req.params.shopId); if (!shop) return res.status(404).json({ error: 'Shop not found' });
@@ -173,7 +180,7 @@ router.get('/super/shops/:shopId', ...owner, asyncRoute(async (req, res) => {
     count(*) FILTER(WHERE created_at::date=current_date)::int today,
     count(*) FILTER(WHERE created_at>=date_trunc('month',now()))::int month_orders,
     count(*) FILTER(WHERE created_at>=date_trunc('year',now()))::int year_orders,
-    coalesce(sum((config->>'billablePages')::int),0)::int pages,
+    coalesce(sum(NULLIF(config->>'billablePages','')::numeric),0)::int pages,
     coalesce(sum(amount),0)::numeric(12,2) charges,
     coalesce(sum(amount) FILTER(WHERE payment_status='verified'),0)::numeric(12,2) online_verified,
     coalesce(sum(amount) FILTER(WHERE payment_method='cash' AND order_status IN ('print_queued','printing','completed')),0)::numeric(12,2) cash_confirmed
@@ -185,7 +192,9 @@ router.get('/super/shops/:shopId', ...owner, asyncRoute(async (req, res) => {
 router.patch('/super/shops/:shopId', ...owner, asyncRoute(async (req, res) => {
   const shop = await findShop(req.params.shopId); if (!shop) return res.status(404).json({ error: 'Shop not found' });
   const b = req.body;
-  const pricing = b.pricing ? validatePricing(b.pricing) : shop.pricing;
+  const pricing = b.pricing || OPTIONAL_PRICING_KEYS.some((key) => Object.prototype.hasOwnProperty.call(b, key))
+    ? pricingFromBody(b, shop.pricing)
+    : shop.pricing;
   const printConfig = b.printConfig ? validatePrintConfig(b.printConfig) : shop.print_config;
   if (b.adminPassword && String(b.adminPassword).length < 10) return res.status(400).json({ error: 'Shop admin password must be at least 10 characters' });
   const passwordHash = b.adminPassword ? await bcrypt.hash(String(b.adminPassword), 12) : shop.admin_password_hash;
@@ -460,7 +469,7 @@ router.post('/payments/webhook', asyncRoute(async (req, res) => {
 
 // Shop admin endpoints
 router.get('/admin/me', ...admin, asyncRoute(async (req, res) => { const { rows } = await pool.query('SELECT * FROM shops WHERE id=$1', [req.user.shopId]); if (!rows[0]) return res.status(401).json({ error: 'Shop account no longer exists' }); if (!isActive(rows[0])) return res.status(423).json({ error: `Shop is ${statusOf(rows[0])}` }); res.json({ shop: safeShop(rows[0]) }); }));
-router.get('/admin/overview', ...admin, asyncRoute(async (req, res) => { const shopId = req.user.shopId; const { rows } = await pool.query(`SELECT count(*) FILTER(WHERE created_at::date=current_date)::int today_orders,coalesce(sum((config->>'billablePages')::int) FILTER(WHERE created_at::date=current_date),0)::int today_pages,coalesce(sum(amount) FILTER(WHERE created_at::date=current_date AND order_status IN ('print_queued','printing','completed')),0)::numeric(12,2) today_earnings,count(*) FILTER(WHERE order_status='cash_confirmation_pending')::int cash_pending,count(*) FILTER(WHERE order_status='payment_review')::int payment_pending,count(*) FILTER(WHERE order_status='pending_payment')::int awaiting_payment,count(*) FILTER(WHERE print_status IN ('queued','claimed','printing'))::int queue FROM orders WHERE shop_id=$1`, [shopId]); const { rows: recent } = await pool.query('SELECT o.*,u.original_name,j.error_message print_error FROM orders o JOIN uploads u ON u.id=o.upload_id LEFT JOIN print_jobs j ON j.order_id=o.id WHERE o.shop_id=$1 ORDER BY o.created_at DESC LIMIT 12', [shopId]); const { rows: agent } = await pool.query('SELECT agent_name,agent_last_seen FROM shops WHERE id=$1', [shopId]); res.json({ stats: rows[0], recent, agent: agent[0] }); }));
+router.get('/admin/overview', ...admin, asyncRoute(async (req, res) => { const shopId = req.user.shopId; const { rows } = await pool.query(`SELECT count(*) FILTER(WHERE created_at::date=current_date)::int today_orders,coalesce(sum(NULLIF(config->>'billablePages','')::numeric) FILTER(WHERE created_at::date=current_date),0)::int today_pages,coalesce(sum(amount) FILTER(WHERE created_at::date=current_date AND order_status IN ('print_queued','printing','completed')),0)::numeric(12,2) today_earnings,count(*) FILTER(WHERE order_status='cash_confirmation_pending')::int cash_pending,count(*) FILTER(WHERE order_status='payment_review')::int payment_pending,count(*) FILTER(WHERE order_status='pending_payment')::int awaiting_payment,count(*) FILTER(WHERE print_status IN ('queued','claimed','printing'))::int queue FROM orders WHERE shop_id=$1`, [shopId]); const { rows: recent } = await pool.query('SELECT o.*,u.original_name,j.error_message print_error FROM orders o JOIN uploads u ON u.id=o.upload_id LEFT JOIN print_jobs j ON j.order_id=o.id WHERE o.shop_id=$1 ORDER BY o.created_at DESC LIMIT 12', [shopId]); const { rows: agent } = await pool.query('SELECT agent_name,agent_last_seen FROM shops WHERE id=$1', [shopId]); res.json({ stats: rows[0], recent, agent: agent[0] }); }));
 router.get('/admin/print-queue', ...admin, asyncRoute(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT o.*, u.original_name, u.mime_type, u.byte_size,
@@ -529,7 +538,21 @@ router.patch('/admin/print-queue', ...admin, asyncRoute(async (req, res) => {
     client.release();
   }
 }));
-router.get('/admin/orders', ...admin, asyncRoute(async (req, res) => { const params = [req.user.shopId]; let where = 'o.shop_id=$1'; if (req.query.status) { params.push(String(req.query.status)); where += ' AND o.order_status=$' + params.length; } if (req.query.from) { params.push(req.query.from); where += ' AND o.created_at >= $' + params.length + '::date'; } if (req.query.to) { params.push(req.query.to); where += ' AND o.created_at < ($' + params.length + '::date + interval \'1 day\')'; } if (req.query.q) { params.push(`%${String(req.query.q).slice(0, 100)}%`); where += ' AND (o.order_code ILIKE $' + params.length + ' OR u.original_name ILIKE $' + params.length + ')'; } const { rows } = await pool.query(`SELECT o.*,u.original_name,u.mime_type,u.byte_size,j.error_message print_error,j.attempts print_attempts,j.queue_position print_queue_position FROM orders o JOIN uploads u ON u.id=o.upload_id LEFT JOIN print_jobs j ON j.order_id=o.id WHERE ${where} ORDER BY o.created_at DESC LIMIT 200`, params); res.json(rows); }));
+router.get('/admin/orders', ...admin, asyncRoute(async (req, res) => {
+  const { from, to } = req.query;
+  if ((from !== undefined && !validDateString(from)) || (to !== undefined && !validDateString(to))) {
+    return res.status(400).json({ error: 'Order dates must use a valid YYYY-MM-DD date' });
+  }
+  if (from && to && from > to) return res.status(400).json({ error: 'End date must be on or after start date' });
+  const params = [req.user.shopId];
+  let where = 'o.shop_id=$1';
+  if (req.query.status) { params.push(String(req.query.status)); where += ' AND o.order_status=$' + params.length; }
+  if (from) { params.push(from); where += ' AND o.created_at >= $' + params.length + '::date'; }
+  if (to) { params.push(to); where += ' AND o.created_at < ($' + params.length + '::date + interval \'1 day\')'; }
+  if (req.query.q) { params.push(`%${String(req.query.q).slice(0, 100)}%`); where += ' AND (o.order_code ILIKE $' + params.length + ' OR u.original_name ILIKE $' + params.length + ')'; }
+  const { rows } = await pool.query(`SELECT o.*,u.original_name,u.mime_type,u.byte_size,j.error_message print_error,j.attempts print_attempts,j.queue_position print_queue_position FROM orders o JOIN uploads u ON u.id=o.upload_id LEFT JOIN print_jobs j ON j.order_id=o.id WHERE ${where} ORDER BY o.created_at DESC LIMIT 200`, params);
+  res.json(rows);
+}));
 router.delete('/admin/orders/:orderId', ...admin, asyncRoute(async (req, res) => {
   const shopId = req.user.shopId;
   const client = await pool.connect();
@@ -621,8 +644,29 @@ router.get('/admin/analytics', ...admin, asyncRoute(async (req, res) => {
   const rows = await queryShopAnalytics(pool, req.user.shopId, range);
   res.json({ groupBy: range.groupBy, timeZone: range.timeZone, from: range.from, to: range.to, rows });
 }));
-router.patch('/admin/settings', ...admin, asyncRoute(async (req, res) => { const b = req.body; const { rows } = await pool.query('SELECT * FROM shops WHERE id=$1', [req.user.shopId]); const shop = rows[0]; const pc = b.printConfig ? validatePrintConfig(b.printConfig) : shop.print_config; const pricing = b.pricing ? validatePricing(b.pricing) : shop.pricing; const upiId = 'upiId' in b ? normalizeUpiId(b.upiId) : shop.upi_id; if (upiId && !isValidUpiId(upiId)) return res.status(400).json({ error: 'Enter a valid UPI ID such as shopname@bank' }); const upiName = 'upiName' in b ? (String(b.upiName || '').trim().slice(0, 60) || null) : shop.upi_name; const { rows: updated } = await pool.query('UPDATE shops SET name=$2,owner_name=$3,phone=$4,email=$5,address=$6,city=$7,upi_id=$8,upi_name=$9,pricing=$10,print_config=$11,agent_name=$12 WHERE id=$1 RETURNING *', [shop.id, b.name ?? shop.name, b.ownerName ?? shop.owner_name, b.phone ?? shop.phone, b.email ?? shop.email, b.address ?? shop.address, b.city ?? shop.city, upiId, upiName, pricing, pc, b.agentName ?? shop.agent_name]); await audit(shop.id, req.user.email, 'shop.settings.updated', { fields: Object.keys(b) }); res.json({ shop: safeShop(updated[0]) }); }));
-router.post('/admin/agent/rotate', ...admin, asyncRoute(async (req, res) => { const value = token(); await pool.query('UPDATE shops SET agent_token_hash=$2 WHERE id=$1', [req.user.shopId, sha256(value)]); res.json({ agentToken: value }); }));
+router.patch('/admin/settings', ...admin, asyncRoute(async (req, res) => {
+  const b = req.body || {};
+  const { rows } = await pool.query('SELECT * FROM shops WHERE id=$1', [req.user.shopId]);
+  const shop = rows[0];
+  const trimmedValue = (value, fallback) => typeof value === 'string' && value.trim() ? value.trim() : fallback;
+  const pc = b.printConfig ? validatePrintConfig(b.printConfig) : shop.print_config;
+  const pricing = b.pricing ? validatePricing(b.pricing) : shop.pricing;
+  const upiId = 'upiId' in b ? normalizeUpiId(b.upiId) : shop.upi_id;
+  if (upiId && !isValidUpiId(upiId)) return res.status(400).json({ error: 'Enter a valid UPI ID such as shopname@bank' });
+  const upiName = 'upiName' in b ? (String(b.upiName || '').trim().slice(0, 60) || null) : shop.upi_name;
+  const { rows: updated } = await pool.query(
+    'UPDATE shops SET name=$2,owner_name=$3,phone=$4,email=$5,address=$6,city=$7,upi_id=$8,upi_name=$9,pricing=$10,print_config=$11,agent_name=$12 WHERE id=$1 RETURNING *',
+    [shop.id, trimmedValue(b.name, shop.name), trimmedValue(b.ownerName, shop.owner_name), trimmedValue(b.phone, shop.phone), b.email ?? shop.email, trimmedValue(b.address, shop.address), trimmedValue(b.city, shop.city), upiId, upiName, pricing, pc, trimmedValue(b.agentName, shop.agent_name)],
+  );
+  await audit(shop.id, req.user.email, 'shop.settings.updated', { fields: Object.keys(b) });
+  res.json({ shop: safeShop(updated[0]) });
+}));
+router.post('/admin/agent/rotate', ...admin, asyncRoute(async (req, res) => {
+  const value = token();
+  await pool.query('UPDATE shops SET agent_token_hash=$2 WHERE id=$1', [req.user.shopId, sha256(value)]);
+  await audit(req.user.shopId, req.user.email, 'shop.agent_token.rotated');
+  res.json({ agentToken: value });
+}));
 router.get('/admin/uploads/:orderId', ...admin, asyncRoute(async (req, res) => {
   const { rows } = await pool.query(`SELECT u.stored_name,u.original_name,u.mime_type,o.print_file_name FROM uploads u JOIN orders o ON o.upload_id=u.id WHERE o.id=$1 AND o.shop_id=$2`, [req.params.orderId, req.user.shopId]);
   if (!rows[0]) return res.status(404).json({ error: 'Document not found' });

@@ -16,6 +16,7 @@ let statusTimer = null;
 let adminTimer = null;
 let adminOrdersSignature = '';
 let adminRefreshBusy = false;
+function setShellMode(on) { document.body.classList.toggle('is-admin', Boolean(on)); }
 
 /* Load only the code this page needs: admin pages never download pdf.js or the customer flow, and vice versa. */
 const loadScript = src => new Promise((resolve, reject) => { const el = document.createElement('script'); el.src = src; el.onload = resolve; el.onerror = () => reject(new Error(`Could not load ${src}`)); document.head.appendChild(el); });
@@ -88,7 +89,12 @@ async function start() {
   try { await modulesReady; } catch (e) { app.innerHTML = errorPanel('Could not load this page', 'Check your connection and try again.'); return; }
   setBrandHome(isCustomerRoute ? `/shop/${encodeURIComponent(route)}` : isShopAdminRoute ? '/admin' : '/');
   if (isCustomerRoute) { document.querySelector('#site-footer').classList.add('hidden'); document.querySelector('#app').classList.add('wide'); setHeading(''); await renderCustomer(route); return; }
-  if (isShopAdminRoute) { if (session?.role === 'shop_admin') { logoutButton.classList.remove('hidden'); await renderShopAdmin(); } else { renderLogin('shop'); } return; }
+  if (isShopAdminRoute) {
+    if (session?.role === 'shop_admin') { logoutButton.classList.remove('hidden'); await renderShopAdmin(); }
+    else if (session?.role === 'super_admin') { logoutButton.classList.remove('hidden'); await renderSuper(); }
+    else renderLogin('shop');
+    return;
+  }
   if (session?.role === 'super_admin') { logoutButton.classList.remove('hidden'); await renderSuper(); return; }
   if (session?.role === 'shop_admin') { logoutButton.classList.remove('hidden'); await renderShopAdmin(); return; }
   renderLogin('super');

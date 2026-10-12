@@ -46,7 +46,7 @@ const store = {
   del(k) { try { localStorage.removeItem(k); } catch { /* private mode */ } },
 };
 const TERMINAL = new Set(['completed', 'cancelled']);
-const isTerminal = (o) => TERMINAL.has(o.status) || ['cancelled', 'rejected', 'failed'].includes(o.paymentStatus) && o.status !== 'failed';
+const isTerminal = (o) => TERMINAL.has(o.status) || ['cancelled', 'rejected', 'failed'].includes(o.paymentStatus);
 const isActiveOrder = (o) => !isTerminal(o) && Date.now() - new Date(o.createdAt).getTime() < ACTIVE_ORDER_MAX_AGE_MS;
 const loadImage = (url) => new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = () => rej(new Error('image')); img.src = url; });
 

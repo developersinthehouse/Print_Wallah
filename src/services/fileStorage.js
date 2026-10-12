@@ -59,6 +59,7 @@ function createFileStorage({ environment = process.env, client } = {}) {
     directory,
     async put(key, body) {
       if (!isSafeStoredFilename(key)) throw new Error('Invalid stored filename');
+      await fs.mkdir(directory, { recursive: true });
       await fs.writeFile(path.join(directory, key), body, { flag: 'wx' });
     },
     async get(key) {

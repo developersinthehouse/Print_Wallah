@@ -42,12 +42,14 @@ Open the Network URL on the phone, sign in to Super Admin there, and shop links 
 
 ## Local setup
 
-1. Create a PostgreSQL database and a database user with permission to create tables and the `pgcrypto` extension. For example, from `psql` as a database administrator:
+1. Create a PostgreSQL database and a database user with permission to create and alter tables. For example, from `psql` as a database administrator:
 
    ```sql
    CREATE USER printing_user WITH PASSWORD 'choose-a-local-password';
    CREATE DATABASE printing_platform OWNER printing_user;
    ```
+
+   The schema uses PostgreSQL's built-in `gen_random_uuid()` and does not require installing an extension.
 
 2. Copy `.env.example` to `.env`, set `DATABASE_URL`, choose a long random `JWT_SECRET`, and set `SUPER_ADMIN_EMAIL` and `SUPER_ADMIN_PASSWORD`. See [environment variables](docs/ENVIRONMENT.md).
 

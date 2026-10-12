@@ -16,7 +16,8 @@ async function appendImagePage(document, bytes, mimeType, config) {
       : null;
   if (!image) throw new Error('Only PDF, PNG and JPG files can be bundled for printing');
 
-  const [paperWidth, paperHeight] = PAPER_POINTS[config.paperSize] || PAPER_POINTS.A4;
+  const sizeKey = String(config?.paperSize || 'A4').toUpperCase();
+  const [paperWidth, paperHeight] = PAPER_POINTS[sizeKey] || PAPER_POINTS.A4;
   const [pageWidth, pageHeight] = config.orientation === 'landscape'
     ? [paperHeight, paperWidth]
     : [paperWidth, paperHeight];

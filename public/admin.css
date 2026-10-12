@@ -125,7 +125,7 @@ body.is-admin .site-footer { display: none }
 .queue-drag-handle:hover, .queue-drag-handle:focus-visible { outline: none; background: var(--surface-2); color: var(--text); box-shadow: var(--admin-soft-shadow) }
 .queue-drag-handle:active { cursor: grabbing; color: var(--brand-bright) }
 .queue-drag-handle .a-ic { pointer-events: none }
-.a-order.is-reorderable.is-dragging { z-index: 2; opacity: .48; background: var(--surface-2) }
+.a-order.is-reorderable.is-dragging { z-index: 2; opacity: .48; background: var(--surface-2); pointer-events: none }
 .a-order.is-reorderable { transition: background-color .16s, opacity .16s }
 .a-err { display: flex; align-items: flex-start; gap: var(--s-2); padding: var(--s-2) var(--s-3); border-radius: var(--r-sm); background: var(--bad-bg); color: #ffd5d1; font-size: .82rem; line-height: 1.45; overflow-wrap: anywhere }
 .a-err .a-ic { margin-top: 1px; color: var(--bad) }

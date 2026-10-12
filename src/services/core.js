@@ -6,12 +6,15 @@ const OPTIONAL_PRICING_KEYS = Object.freeze(['glossy_a3', 'photo_sheet_a3']);
 const DEFAULT_PRINT_CONFIG = Object.freeze({ paperSizes: ['A4', 'A3'], paperTypes: ['normal', 'glossy'], color: true, duplex: true, photo: true, defaultPaper: 'A4' });
 
 function isActive(shop, now = new Date()) {
-  return !shop.manually_locked && new Date(shop.access_end) > now;
+  if (!shop || shop.manually_locked) return false;
+  const end = new Date(shop.access_end);
+  return !Number.isNaN(end.getTime()) && end > now;
 }
 
 function statusOf(shop, now = new Date()) {
-  if (shop.manually_locked) return 'locked';
-  return new Date(shop.access_end) <= now ? 'expired' : 'active';
+  if (!shop || shop.manually_locked) return 'locked';
+  const end = new Date(shop.access_end);
+  return Number.isNaN(end.getTime()) || end <= now ? 'expired' : 'active';
 }
 
 function calculatePrice({ pricing, pages, copies, color, paperSize, paperType, duplex, photoSheets }) {
@@ -27,7 +30,16 @@ function calculatePrice({ pricing, pages, copies, color, paperSize, paperType, d
   if (!Number.isInteger(photoSheets) || photoSheets < 0 || photoSheets > 500) throw new Error('Photo sheets must be between 0 and 500');
   const printablePages = duplex && paperType === 'normal' ? Math.ceil(pages / 2) : pages;
   const base = Number(photoSheets || 0) > 0 ? 0 : printablePages * copies * rate;
-  const photoRate = size === 'A3' && pricing.photo_sheet_a3 !== undefined && pricing.photo_sheet_a3 !== null && pricing.photo_sheet_a3 !== '' ? Number(pricing.photo_sheet_a3) : Number(pricing.photo_sheet || 0);
+  const photoRateValue = size === 'A3' && pricing.photo_sheet_a3 !== undefined && pricing.photo_sheet_a3 !== null && pricing.photo_sheet_a3 !== ''
+    ? pricing.photo_sheet_a3
+    : pricing.photo_sheet;
+  const rawPhotoRate = photoRateValue === undefined || photoRateValue === null || photoRateValue === ''
+    ? Number.NaN
+    : Number(photoRateValue);
+  if (photoSheets > 0 && (!Number.isFinite(rawPhotoRate) || rawPhotoRate < 0)) {
+    throw new Error('Photo sheet pricing is not configured properly');
+  }
+  const photoRate = Number.isFinite(rawPhotoRate) && rawPhotoRate >= 0 ? rawPhotoRate : 0;
   const photoCharge = photoSheets * photoRate;
   return { rate, printablePages, base: roundMoney(base), photoCharge: roundMoney(photoCharge), total: roundMoney(base + photoCharge) };
 }

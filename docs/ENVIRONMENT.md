@@ -9,7 +9,7 @@ Copy `.env.example` to `.env` locally. On Render, add the same values under the 
 | `APP_URL` | Yes in production | Public root address used to create shop links and QR codes. No trailing slash. | `https://printing.example.com` |
 | `JWT_SECRET` | Yes | Private signing key. Generate a random value of at least 32 characters. | `use-a-long-random-value` |
 | `DATABASE_URL` | Yes | PostgreSQL connection string from your local database or Render database. | `postgresql://user:pass@host:5432/db` |
-| `DATABASE_SSL` | Sometimes | Set `true` when the database provider requires TLS. Render external DB connections generally require TLS; use the provider's instructions. | `true` |
+| `DATABASE_SSL` | Sometimes | `true` enables TLS without certificate verification for providers that require TLS with a private/unavailable CA. `strict` enables TLS with certificate verification. Leave unset to preserve the SSL mode in `DATABASE_URL`; `false` also leaves that connection-string setting unchanged. | `strict` when supported by the provider |
 | `SUPER_ADMIN_EMAIL` | Yes | Email used to sign in to the platform owner account. | `owner@example.com` |
 | `SUPER_ADMIN_PASSWORD` | Yes | Long unique password for the platform owner. | `use-a-password-manager` |
 | `DEFAULT_ACCESS_DAYS` | No | Initial shop access duration. Defaults to 30 days. | `30` |

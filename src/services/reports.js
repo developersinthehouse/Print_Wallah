@@ -45,7 +45,7 @@ function periodExpression(groupBy, createdAt = 'created_at') {
 
 const REPORT_METRICS = `
   count(*)::int AS orders,
-  coalesce(sum((config->>'billablePages')::int), 0)::int AS pages,
+  coalesce(sum(NULLIF(config->>'billablePages', '')::numeric), 0)::int AS pages,
   coalesce(sum(amount) FILTER (WHERE payment_status = 'verified'), 0)::numeric(12,2) AS revenue,
   coalesce(sum(amount) FILTER (WHERE payment_status = 'verified' AND payment_method = 'upi'), 0)::numeric(12,2) AS online,
   coalesce(sum(amount) FILTER (WHERE payment_status = 'verified' AND payment_method = 'cash'), 0)::numeric(12,2) AS cash,
@@ -78,7 +78,7 @@ async function queryPlatformAnalytics(pool, range) {
   const { rows } = await pool.query(
     `SELECT shops.public_id AS shop_id, shops.name AS shop_name,
             count(orders.id)::int AS orders,
-            coalesce(sum((orders.config->>'billablePages')::int), 0)::int AS pages,
+            coalesce(sum(NULLIF(orders.config->>'billablePages', '')::numeric), 0)::int AS pages,
             coalesce(sum(orders.amount) FILTER (WHERE orders.payment_status = 'verified'), 0)::numeric(12,2) AS revenue,
             coalesce(sum(orders.amount) FILTER (WHERE orders.payment_status = 'verified' AND orders.payment_method = 'upi'), 0)::numeric(12,2) AS online,
             coalesce(sum(orders.amount) FILTER (WHERE orders.payment_status = 'verified' AND orders.payment_method = 'cash'), 0)::numeric(12,2) AS cash,
@@ -95,6 +95,7 @@ async function queryPlatformAnalytics(pool, range) {
 
 module.exports = {
   REPORT_TIME_ZONE,
+  validDateString,
   parseAnalyticsRange,
   queryShopAnalytics,
   queryPlatformAnalytics,

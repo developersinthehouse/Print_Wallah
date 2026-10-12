@@ -28,6 +28,8 @@ test('shop status prioritizes manual lock, then expiry', () => {
   assert.equal(statusOf({ manually_locked: false, access_end: '2026-09-29T00:00:00Z' }, now), 'expired');
   assert.equal(statusOf({ manually_locked: false, access_end: '2026-10-01T00:00:00Z' }, now), 'active');
   assert.equal(isActive({ manually_locked: false, access_end: '2026-10-01T00:00:00Z' }, now), true);
+  assert.equal(isActive({ manually_locked: false, access_end: 'invalid' }, now), false);
+  assert.equal(statusOf({ manually_locked: false, access_end: 'invalid' }, now), 'expired');
 });
 
 test('quote rejects invalid quantities and unconfigured price keys', () => {
@@ -94,4 +96,11 @@ test('optional A3 glossy and photo rates fall back to previous behaviour when un
   assert.equal(calculatePrice({ pricing: { ...base, glossy_a3: 35 }, pages: 1, copies: 1, color: true, paperSize: 'A3', paperType: 'glossy' }).total, 35);
   assert.equal(calculatePrice({ pricing: base, pages: 1, copies: 2, color: true, paperSize: 'A3', paperType: 'glossy', photoSheets: 2 }).photoCharge, 60);
   assert.equal(calculatePrice({ pricing: { ...base, photo_sheet_a3: 55 }, pages: 1, copies: 2, color: true, paperSize: 'A3', paperType: 'glossy', photoSheets: 2 }).photoCharge, 110);
+});
+
+test('invalid photo pricing cannot produce a NaN quote', () => {
+  assert.throws(() => calculatePrice({
+    pricing: { ...rates, photo_sheet: '' },
+    pages: 1, copies: 1, color: true, paperSize: 'A4', paperType: 'glossy', photoSheets: 1,
+  }), /Photo sheet pricing/);
 });
