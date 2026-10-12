@@ -110,6 +110,25 @@ ALTER TABLE print_jobs
   ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS error_message TEXT;
 ALTER TABLE print_jobs ALTER COLUMN id SET DEFAULT gen_random_uuid();
+DO $$
+DECLARE
+  legacy_column RECORD;
+BEGIN
+  FOR legacy_column IN
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'print_jobs'
+      AND is_nullable = 'NO'
+      AND column_default IS NULL
+      AND column_name NOT IN (
+        'id', 'order_id', 'shop_id', 'queue_position', 'status', 'attempts',
+        'claimed_by', 'claimed_at', 'error_message', 'created_at', 'updated_at'
+      )
+  LOOP
+    EXECUTE format('ALTER TABLE print_jobs ALTER COLUMN %I DROP NOT NULL', legacy_column.column_name);
+  END LOOP;
+END $$;
 WITH legacy_order_matches AS (
   SELECT jobs.ctid AS row_id,
          orders.id AS order_id,
