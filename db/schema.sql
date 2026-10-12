@@ -103,6 +103,11 @@ CREATE TABLE IF NOT EXISTS print_jobs (
 -- Upgrade databases that already had a print_jobs table before it stored an order foreign key.
 ALTER TABLE print_jobs
   ADD COLUMN IF NOT EXISTS order_id UUID REFERENCES orders(id) ON DELETE CASCADE;
+ALTER TABLE print_jobs
+  ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS claimed_by TEXT,
+  ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS error_message TEXT;
 WITH legacy_order_matches AS (
   SELECT jobs.ctid AS row_id,
          orders.id AS order_id,
