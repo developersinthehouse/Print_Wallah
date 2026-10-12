@@ -172,29 +172,40 @@ SET order_id = legacy_order_matches.order_id
 FROM legacy_order_matches
 WHERE jobs.ctid = legacy_order_matches.row_id
   AND legacy_order_matches.match_number = 1;
-CREATE UNIQUE INDEX IF NOT EXISTS print_jobs_order_id_unique_idx ON print_jobs (order_id);
-CREATE UNIQUE INDEX IF NOT EXISTS orders_id_shop_id_unique_idx ON orders (id, shop_id);
 DO $$
 DECLARE
   shop_constraint RECORD;
+  shop_id_type TEXT;
 BEGIN
   FOR shop_constraint IN
     SELECT conname
     FROM pg_constraint
     WHERE conrelid = 'print_jobs'::regclass
-      AND confrelid = 'shops'::regclass
       AND contype = 'f'
       AND (SELECT attnum FROM pg_attribute
            WHERE attrelid = 'print_jobs'::regclass AND attname = 'shop_id') = ANY (conkey)
   LOOP
     EXECUTE format('ALTER TABLE print_jobs DROP CONSTRAINT %I', shop_constraint.conname);
   END LOOP;
+
+  SELECT data_type INTO shop_id_type
+  FROM information_schema.columns
+  WHERE table_schema = current_schema()
+    AND table_name = 'print_jobs'
+    AND column_name = 'shop_id';
+
+  IF shop_id_type <> 'uuid' THEN
+    ALTER TABLE print_jobs
+      ALTER COLUMN shop_id TYPE UUID USING NULLIF(btrim(shop_id::text), '')::UUID;
+  END IF;
 END $$;
 UPDATE print_jobs jobs
 SET shop_id = orders.shop_id
 FROM orders
 WHERE jobs.order_id = orders.id
   AND jobs.shop_id IS DISTINCT FROM orders.shop_id;
+CREATE UNIQUE INDEX IF NOT EXISTS print_jobs_order_id_unique_idx ON print_jobs (order_id);
+CREATE UNIQUE INDEX IF NOT EXISTS orders_id_shop_id_unique_idx ON orders (id, shop_id);
 DO $$
 BEGIN
 
