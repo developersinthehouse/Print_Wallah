@@ -110,9 +110,12 @@ ALTER TABLE print_jobs
   ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS error_message TEXT;
 ALTER TABLE print_jobs ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE print_jobs ALTER COLUMN status SET DEFAULT 'queued';
 DO $$
 DECLARE
   legacy_column RECORD;
+  status_values TEXT[];
+  legacy_constraint RECORD;
 BEGIN
   FOR legacy_column IN
     SELECT column_name
@@ -128,6 +131,30 @@ BEGIN
   LOOP
     EXECUTE format('ALTER TABLE print_jobs ALTER COLUMN %I DROP NOT NULL', legacy_column.column_name);
   END LOOP;
+
+  SELECT COALESCE(array_agg(DISTINCT status), ARRAY[]::TEXT[])
+  INTO status_values
+  FROM print_jobs;
+  status_values := status_values || ARRAY['queued', 'claimed', 'printing', 'completed', 'failed']::TEXT[];
+
+  FOR legacy_constraint IN
+    SELECT conname
+    FROM pg_constraint
+    WHERE conrelid = 'print_jobs'::regclass
+    AND contype = 'c'
+    AND (SELECT attnum FROM pg_attribute
+         WHERE attrelid = 'print_jobs'::regclass AND attname = 'status') = ANY (conkey)
+  LOOP
+    EXECUTE format('ALTER TABLE print_jobs DROP CONSTRAINT %I', legacy_constraint.conname);
+  END LOOP;
+
+  SELECT array_agg(DISTINCT value)
+  INTO status_values
+  FROM unnest(status_values) AS value;
+  EXECUTE format(
+    'ALTER TABLE print_jobs ADD CONSTRAINT print_jobs_status_check CHECK (status = ANY (%L::TEXT[]))',
+    status_values
+  );
 END $$;
 WITH legacy_order_matches AS (
   SELECT jobs.ctid AS row_id,
