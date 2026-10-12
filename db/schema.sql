@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS payments (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS verified_by TEXT;
 CREATE INDEX IF NOT EXISTS payments_shop_idx ON payments (shop_id, created_at DESC);
 
 CREATE SEQUENCE IF NOT EXISTS print_queue_position_seq;
