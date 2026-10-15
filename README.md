@@ -14,7 +14,7 @@ Print Wallah is a lightweight multi-shop printing platform made by DEVELOPERS. I
 - Atomic shop-specific print-job leasing and a Python agent that runs a configured OS print command and reports the result.
 - Photo quantity/sheet calculation and printable PDF output with selected photo size, page orientation, margins, crop, and cut guides.
 - Up to 10 PDFs/JPGs/PNGs can be bundled under one shared print configuration and one payment; the server creates a combined print-ready PDF.
-- Source uploads and generated print files are deleted from live storage immediately after successful print-agent confirmation; order, payment and audit metadata remains.
+- Completed print files are deleted from live storage about 10 minutes after successful printing; order, payment and audit metadata remains.
 - Shop Admin and Super Admin provide daily/monthly Asia/Kolkata analytics, per-shop comparison and CSV export.
 - Dark, mobile-first customer portal with a real print preview (paper size, orientation, scaling, margins, colour, copies, PDF pages, photo layouts), multi-photo sheets and a full UPI/cash checkout with order tracking.
 - Optional signed payment webhook for automatic UPI confirmation (`docs/PAYMENTS.md`).
@@ -42,14 +42,12 @@ Open the Network URL on the phone, sign in to Super Admin there, and shop links 
 
 ## Local setup
 
-1. Create a PostgreSQL database and a database user with permission to create and alter tables. For example, from `psql` as a database administrator:
+1. Create a PostgreSQL database and a database user with permission to create tables and the `pgcrypto` extension. For example, from `psql` as a database administrator:
 
    ```sql
    CREATE USER printing_user WITH PASSWORD 'choose-a-local-password';
    CREATE DATABASE printing_platform OWNER printing_user;
    ```
-
-   The schema uses PostgreSQL's built-in `gen_random_uuid()` and does not require installing an extension.
 
 2. Copy `.env.example` to `.env`, set `DATABASE_URL`, choose a long random `JWT_SECRET`, and set `SUPER_ADMIN_EMAIL` and `SUPER_ADMIN_PASSWORD`. See [environment variables](docs/ENVIRONMENT.md).
 
@@ -69,9 +67,9 @@ The server also initializes the schema on startup, so `npm run db:init` is safe 
 
 ## Deployment
 
-See [deployment guide](docs/DEPLOYMENT.md). Create a PostgreSQL database and a Node web service. Configure `DATABASE_URL`, `DATABASE_SSL`, `APP_URL`, `JWT_SECRET`, `SUPER_ADMIN_EMAIL`, and `SUPER_ADMIN_PASSWORD` as environment variables. Set build command to `npm ci` and start command to `npm start`.
+See [Render deployment](docs/DEPLOYMENT.md). Create a PostgreSQL database and a Node web service. Configure `DATABASE_URL`, `DATABASE_SSL`, `APP_URL`, `JWT_SECRET`, `SUPER_ADMIN_EMAIL`, and `SUPER_ADMIN_PASSWORD` as Render environment variables. Set build command to `npm install` and start command to `npm start`.
 
-Uploaded documents stay private and are never served as static content. For Cloudflare R2, set `STORAGE_PROVIDER=r2` and the four `R2_*` variables in [environment settings](docs/ENVIRONMENT.md). Alternatively, set `UPLOAD_DIR` to persistent mounted storage. Production will not start without persistent file storage.
+Uploaded documents are kept in `UPLOAD_DIR`. The app does not expose that directory as static content. The default local directory is `./storage`; production must mount persistent storage at the chosen absolute path and set `UPLOAD_DIR` to it. Production uploads return 503 if this is not configured. Render's ephemeral filesystem is not suitable for customer files across deploys/restarts.
 
 ## Payment and printing setup
 

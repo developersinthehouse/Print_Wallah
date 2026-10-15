@@ -1,3 +1,5 @@
+const fs = require('node:fs/promises');
+const path = require('node:path');
 const { PDFDocument } = require('pdf-lib');
 const { isSafeStoredFilename } = require('./storagePolicy');
 
@@ -16,8 +18,7 @@ async function appendImagePage(document, bytes, mimeType, config) {
       : null;
   if (!image) throw new Error('Only PDF, PNG and JPG files can be bundled for printing');
 
-  const sizeKey = String(config?.paperSize || 'A4').toUpperCase();
-  const [paperWidth, paperHeight] = PAPER_POINTS[sizeKey] || PAPER_POINTS.A4;
+  const [paperWidth, paperHeight] = PAPER_POINTS[config.paperSize] || PAPER_POINTS.A4;
   const [pageWidth, pageHeight] = config.orientation === 'landscape'
     ? [paperHeight, paperWidth]
     : [paperWidth, paperHeight];
@@ -49,7 +50,7 @@ async function appendImagePage(document, bytes, mimeType, config) {
   });
 }
 
-async function createDocumentBundle(items, config, storage) {
+async function createDocumentBundle(items, outputPath, config, uploadDir) {
   if (!Array.isArray(items) || items.length < 2) {
     throw new TypeError('A document bundle requires at least two uploaded files');
   }
@@ -60,7 +61,8 @@ async function createDocumentBundle(items, config, storage) {
     if (!isSafeStoredFilename(storedName)) {
       throw new Error('Uploaded document has an invalid stored filename');
     }
-    const bytes = await storage.get(storedName);
+    const filePath = path.join(uploadDir, storedName);
+    const bytes = await fs.readFile(filePath);
 
     if (item.upload.mime_type === 'application/pdf') {
       const source = await PDFDocument.load(bytes);
@@ -72,7 +74,8 @@ async function createDocumentBundle(items, config, storage) {
   }
 
   if (output.getPageCount() < 1) throw new Error('The document bundle contains no printable pages');
-  return { bytes: Buffer.from(await output.save()), pages: output.getPageCount() };
+  await fs.writeFile(outputPath, await output.save());
+  return output.getPageCount();
 }
 
 module.exports = { createDocumentBundle };

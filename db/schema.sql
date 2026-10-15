@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 CREATE TABLE IF NOT EXISTS shops (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   public_id TEXT NOT NULL UNIQUE,
@@ -82,13 +84,12 @@ CREATE TABLE IF NOT EXISTS payments (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-ALTER TABLE payments ADD COLUMN IF NOT EXISTS verified_by TEXT;
 CREATE INDEX IF NOT EXISTS payments_shop_idx ON payments (shop_id, created_at DESC);
 
 CREATE SEQUENCE IF NOT EXISTS print_queue_position_seq;
 CREATE TABLE IF NOT EXISTS print_jobs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  order_id UUID NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
   shop_id UUID NOT NULL REFERENCES shops(id),
   queue_position BIGINT,
   status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','claimed','printing','completed','failed')),
@@ -99,141 +100,6 @@ CREATE TABLE IF NOT EXISTS print_jobs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
--- Upgrade databases that already had a print_jobs table before it stored an order foreign key.
-ALTER TABLE print_jobs
-  ADD COLUMN IF NOT EXISTS order_id UUID REFERENCES orders(id) ON DELETE CASCADE;
-ALTER TABLE print_jobs
-  ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS claimed_by TEXT,
-  ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS error_message TEXT,
-  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
-ALTER TABLE print_jobs ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE print_jobs ALTER COLUMN status SET DEFAULT 'queued';
-DO $$
-DECLARE
-  legacy_column RECORD;
-  status_values TEXT[];
-  legacy_constraint RECORD;
-BEGIN
-  FOR legacy_column IN
-    SELECT column_name
-    FROM information_schema.columns
-    WHERE table_schema = current_schema()
-      AND table_name = 'print_jobs'
-      AND is_nullable = 'NO'
-      AND column_default IS NULL
-      AND column_name NOT IN (
-        'id', 'order_id', 'shop_id', 'queue_position', 'status', 'attempts',
-        'claimed_by', 'claimed_at', 'error_message', 'created_at', 'updated_at'
-      )
-  LOOP
-    EXECUTE format('ALTER TABLE print_jobs ALTER COLUMN %I DROP NOT NULL', legacy_column.column_name);
-  END LOOP;
-
-  SELECT COALESCE(array_agg(DISTINCT status), ARRAY[]::TEXT[])
-  INTO status_values
-  FROM print_jobs;
-  status_values := status_values || ARRAY['queued', 'claimed', 'printing', 'completed', 'failed']::TEXT[];
-
-  FOR legacy_constraint IN
-    SELECT conname
-    FROM pg_constraint
-    WHERE conrelid = 'print_jobs'::regclass
-    AND contype = 'c'
-    AND (SELECT attnum FROM pg_attribute
-         WHERE attrelid = 'print_jobs'::regclass AND attname = 'status') = ANY (conkey)
-  LOOP
-    EXECUTE format('ALTER TABLE print_jobs DROP CONSTRAINT %I', legacy_constraint.conname);
-  END LOOP;
-
-  SELECT array_agg(DISTINCT value)
-  INTO status_values
-  FROM unnest(status_values) AS value;
-  EXECUTE format(
-    'ALTER TABLE print_jobs ADD CONSTRAINT print_jobs_status_check CHECK (status = ANY (%L::TEXT[]))',
-    status_values
-  );
-END $$;
-WITH legacy_order_matches AS (
-  SELECT jobs.ctid AS row_id,
-         orders.id AS order_id,
-         row_number() OVER (
-           PARTITION BY orders.id
-           ORDER BY jobs.ctid
-         ) AS match_number
-  FROM print_jobs jobs
-  JOIN orders ON to_jsonb(jobs)->>'order_code' = orders.order_code
-  WHERE jobs.order_id IS NULL
-)
-UPDATE print_jobs jobs
-SET order_id = legacy_order_matches.order_id
-FROM legacy_order_matches
-WHERE jobs.ctid = legacy_order_matches.row_id
-  AND legacy_order_matches.match_number = 1;
-DO $$
-DECLARE
-  shop_constraint RECORD;
-  shop_id_type TEXT;
-BEGIN
-  FOR shop_constraint IN
-    SELECT conname
-    FROM pg_constraint
-    WHERE conrelid = 'print_jobs'::regclass
-      AND contype = 'f'
-      AND (SELECT attnum FROM pg_attribute
-           WHERE attrelid = 'print_jobs'::regclass AND attname = 'shop_id') = ANY (conkey)
-  LOOP
-    EXECUTE format('ALTER TABLE print_jobs DROP CONSTRAINT %I', shop_constraint.conname);
-  END LOOP;
-
-  SELECT data_type INTO shop_id_type
-  FROM information_schema.columns
-  WHERE table_schema = current_schema()
-    AND table_name = 'print_jobs'
-    AND column_name = 'shop_id';
-
-  IF shop_id_type <> 'uuid' THEN
-    UPDATE print_jobs jobs
-    SET shop_id = orders.shop_id::text
-    FROM orders
-    WHERE jobs.order_id = orders.id;
-
-    UPDATE print_jobs jobs
-    SET shop_id = shops.id::text
-    FROM shops
-    WHERE jobs.shop_id::text = shops.public_id;
-
-    UPDATE print_jobs
-    SET shop_id = substring(btrim(shop_id::text) FROM 4)
-    WHERE btrim(shop_id::text) ~* '^pw_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
-
-    ALTER TABLE print_jobs
-      ALTER COLUMN shop_id TYPE UUID USING NULLIF(btrim(shop_id::text), '')::UUID;
-  END IF;
-END $$;
-UPDATE print_jobs jobs
-SET shop_id = orders.shop_id
-FROM orders
-WHERE jobs.order_id = orders.id
-  AND jobs.shop_id IS DISTINCT FROM orders.shop_id;
-CREATE UNIQUE INDEX IF NOT EXISTS print_jobs_order_id_unique_idx ON print_jobs (order_id);
-CREATE UNIQUE INDEX IF NOT EXISTS orders_id_shop_id_unique_idx ON orders (id, shop_id);
-DO $$
-BEGIN
-
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint
-    WHERE conrelid = 'print_jobs'::regclass
-      AND conname = 'print_jobs_order_shop_fkey'
-  ) THEN
-    ALTER TABLE print_jobs
-      ADD CONSTRAINT print_jobs_order_shop_fkey
-      FOREIGN KEY (order_id, shop_id) REFERENCES orders(id, shop_id)
-      ON DELETE CASCADE NOT VALID;
-  END IF;
-END $$;
 ALTER TABLE print_jobs ADD COLUMN IF NOT EXISTS queue_position BIGINT;
 WITH ranked AS (
   SELECT id, row_number() OVER (PARTITION BY shop_id ORDER BY created_at, id) AS position

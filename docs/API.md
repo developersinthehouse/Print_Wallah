@@ -26,7 +26,7 @@ Shop creation returns the public shop ID, customer URL, QR data URL, and a one-t
 Shop IDs are matched case-insensitively. Every endpoint is bound to the shop in the URL; an upload token from one shop is rejected by another.
 
 - `GET /shops/:shopId/public`: shop settings, rates, `upiConfigured`, `printerOnline`, photo sizes, `maxUploadMb`. 404 unknown shop, 423 locked or expired.
-- `POST /shops/:shopId/uploads`: multipart `document` (PDF, JPG, PNG). Returns `uploadToken`, `pages`, and for images `width`/`height`. Rejects corrupt PDFs, mismatched content types and images over 12000 px. Production requires configured Cloudflare R2 (`STORAGE_PROVIDER=r2` plus the four `R2_*` variables) or an absolute persistent `UPLOAD_DIR`.
+- `POST /shops/:shopId/uploads`: multipart `document` (PDF, JPG, PNG). Returns `uploadToken`, `pages`, and for images `width`/`height`. Rejects corrupt PDFs, mismatched content types and images over 12000 px. In production returns 503 until `UPLOAD_DIR` is an absolute mounted persistent path.
 - `POST /shops/:shopId/price`: `{uploadToken, documentTokens?, config}` returns the exact quote the order will use. `documentTokens` bundles 1–10 distinct, unexpired uploads from this shop; all PDF pages and each JPG/PNG image count as pages. Bundles use shared settings, print every page, and do not accept per-file page ranges. Omitting `documentTokens` keeps single-document and photo-sheet behavior.
 - `POST /shops/:shopId/orders`: `{uploadToken, documentTokens?, paymentMethod: "cash"|"upi", config, expectedAmount?, customerName?, customerPhone?}`.
   - The amount is always recomputed on the server. If `expectedAmount` differs, the response is `409 {code:"PRICE_CHANGED", currentAmount}`.
@@ -68,6 +68,6 @@ Every agent request sends `Authorization: Bearer <shop-agent-token>`.
 - `GET /agent/:shopId/jobs` — atomically claims one job or returns `{job:null}`
 - `POST /agent/:shopId/jobs/:jobId/heartbeat` — renews the active claimed job lease; returns 409 if the lease is no longer active
 - `GET /agent/:shopId/jobs/:jobId/document` — private download for the currently claimed job
-- `POST /agent/:shopId/jobs/:jobId/result` — `{status:"completed"|"failed",error?}`. A completed result immediately deletes that order's source files and generated print PDF from storage; if deletion needs retry, the response includes `filesCleanupPending:true`.
+- `POST /agent/:shopId/jobs/:jobId/result` — `{status:"completed"|"failed",error?}`
 
 The queue lease expires after 15 minutes. The agent keeps a local SQLite print journal and refuses to automatically reprint a job whose previous attempt has an uncertain outcome.

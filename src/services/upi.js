@@ -20,7 +20,7 @@ function buildUpiUri({ upiId, payeeName, amount, orderCode }) {
   const am = Number(amount);
   if (!Number.isFinite(am) || am <= 0 || am > 100000 || Number(am.toFixed(2)) <= 0) throw new Error('Order amount is not payable through UPI');
   if (!ORDER_REF.test(String(orderCode ?? ''))) throw new Error('Order reference is not valid for UPI');
-  const name = String(payeeName || 'Print Shop').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Print Shop';
+  const name = String(payeeName || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
   const enc = (value) => encodeURIComponent(value);
   const params = [
     ['pa', enc(upiId).replace(/%40/g, '@')], ['pn', enc(name)], ['am', am.toFixed(2)], ['cu', 'INR'],

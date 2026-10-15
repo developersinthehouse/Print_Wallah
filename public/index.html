@@ -4,37 +4,43 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0e0f13">
+  <meta name="theme-color" content="#0b0d11">
   <meta name="color-scheme" content="dark">
   <meta name="description" content="Print Wallah: upload, set up and pay for your print order at a local print shop.">
   <meta name="author" content="DEVELOPERS">
   <title>Print Wallah</title>
-  <link rel="icon" id="favicon" href="/assets/logo.png">
-  <link rel="preload" href="/vendor/fonts/plus-jakarta-sans-latin-wght-normal.woff2" as="font" type="font/woff2"
-    crossorigin>
+  <link rel="icon" id="favicon" href="/assets/pw-mark-96.png" type="image/png">
+  <link rel="apple-touch-icon" href="/assets/pw-mark-192.png">
+  <link rel="preload" href="/vendor/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/vendor/fonts/geist-latin-ext-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/styles.css">
   <script src="/icons.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 
-<body>
+<body data-view="boot">
+  <a class="skip-link" href="#app">Skip to content</a>
   <div class="site-shell">
-    <header class="nav-wrap">
-      <nav class="nav" aria-label="Main">
-        <a class="brand" id="brand-link" href="/" aria-label="Print Wallah home"><img id="brand-logo"
-            class="brand-logo" src="/assets/Print-Wallah_wordmark.png" alt="Print Wallah"><span
-            class="brand-mobile"><img src="/assets/Print-Wallah_icon.png" alt="Print Wallah"></span></a>
-        <div class="nav-actions"><div class="login-nav-context" aria-label="Admin console"><span>ADMIN CONSOLE</span><span>Shops · Orders · Print queue</span></div><span id="nav-context" class="nav-actions"></span><button
-            class="button button-quiet hidden" id="logout-button" type="button">Sign out</button></div>
-      </nav>
+    <header class="topbar" id="topbar">
+      <div class="topbar-inner">
+        <a class="brand" id="brand-link" href="/" aria-label="Print Wallah home">
+          <img class="brand-mark" src="/assets/pw-mark-96.png" width="30" height="30" alt="">
+          <img class="brand-word" id="brand-logo" src="/assets/pw-wordmark-320.png" width="150" height="21" alt="Print Wallah">
+        </a>
+        <span class="topbar-title" id="topbar-title"></span>
+        <div class="topbar-end">
+          <span id="nav-context" class="nav-context"></span>
+          <button class="button button-quiet button-small hidden" id="logout-button" type="button">Sign out</button>
+        </div>
+      </div>
     </header>
     <main id="app" aria-live="polite">
-      <div class="loading"><span class="spinner"></span> Loading</div>
+      <div class="loading" role="status"><span class="spinner" aria-hidden="true"></span><span>Loading workspace</span></div>
     </main>
     <footer class="site-footer" id="site-footer"></footer>
   </div>
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <div id="nudge" class="nudge" role="alert" aria-live="assertive"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" popover="manual"></div>
+  <div id="nudge" class="nudge" role="alert" aria-live="assertive" popover="manual"></div>
   <dialog id="confirm" class="confirm" aria-labelledby="confirm-title"></dialog>
   <dialog id="modal" class="modal">
     <div id="modal-content"></div>

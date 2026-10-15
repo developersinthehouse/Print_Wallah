@@ -9,19 +9,12 @@ Copy `.env.example` to `.env` locally. On Render, add the same values under the 
 | `APP_URL` | Yes in production | Public root address used to create shop links and QR codes. No trailing slash. | `https://printing.example.com` |
 | `JWT_SECRET` | Yes | Private signing key. Generate a random value of at least 32 characters. | `use-a-long-random-value` |
 | `DATABASE_URL` | Yes | PostgreSQL connection string from your local database or Render database. | `postgresql://user:pass@host:5432/db` |
-| `DATABASE_SSL` | Sometimes | `true` enables TLS without certificate verification for providers that require TLS with a private/unavailable CA. `strict` enables TLS with certificate verification. Leave unset to preserve the SSL mode in `DATABASE_URL`; `false` also leaves that connection-string setting unchanged. | `strict` when supported by the provider |
+| `DATABASE_SSL` | Sometimes | Set `true` when the database provider requires TLS. Render external DB connections generally require TLS; use the provider's instructions. | `true` |
 | `SUPER_ADMIN_EMAIL` | Yes | Email used to sign in to the platform owner account. | `owner@example.com` |
 | `SUPER_ADMIN_PASSWORD` | Yes | Long unique password for the platform owner. | `use-a-password-manager` |
 | `DEFAULT_ACCESS_DAYS` | No | Initial shop access duration. Defaults to 30 days. | `30` |
-| `STORAGE_PROVIDER` | No locally; set to `r2` for Cloudflare | Selects `local` (default) or Cloudflare R2. Production requires R2 or persistent local storage. | `r2` |
-| `R2_ACCOUNT_ID` | Required for R2 | Cloudflare account ID; the app builds the private S3-compatible endpoint from this value. | Set privately |
-| `R2_ACCESS_KEY_ID` | Required for R2 | Access key ID from an R2 API token scoped to the bucket. | Set privately |
-| `R2_SECRET_ACCESS_KEY` | Required for R2 | Secret access key shown when creating the R2 API token. | Set privately |
-| `R2_BUCKET_NAME` | Required for R2 | Exact name of the private R2 bucket. | `print-wallah-files` |
-| `UPLOAD_DIR` | No for R2; required persistent path for production local storage | Private local folder for uploaded print files. | `./storage` |
+| `UPLOAD_DIR` | No locally; required persistent path in production | Private folder for uploaded print files. On Render, set this to a mounted persistent disk path. | `./storage` |
 | `MAX_UPLOAD_MB` | No | Upload size limit. Defaults to 30 MB. | `30` |
 | `PAYMENT_WEBHOOK_SECRET` | No | Private HMAC secret (24+ random characters) for the generic payment webhook receiver. It does not connect a provider by itself; a provider-specific adapter is still required. | Set privately; see [payment setup](PAYMENTS.md) |
 
 The shop UPI ID and payee name are set per shop in Super Admin or Shop Admin settings. Keep `PAYMENT_WEBHOOK_SECRET` unset until a trusted, provider-specific adapter is ready. Never put provider secrets in frontend code or share them in chat.
-
-With R2, the bucket stays private. Customer browsers and shop computers fetch files through the authenticated application; they do not need a public bucket URL or bucket CORS configuration. See [Cloudflare R2 deployment](DEPLOYMENT.md#cloudflare-r2-setup).

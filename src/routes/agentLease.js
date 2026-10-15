@@ -13,9 +13,6 @@ function createAgentLeaseRouter(pool) {
   const router = express.Router({ mergeParams: true });
 
   router.post('/jobs/:jobId/heartbeat', async (request, response, next) => {
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(request.params.jobId)) {
-      return response.status(400).json({ error: 'Invalid job ID format' });
-    }
     const tokenMatch = /^Bearer\s+(.+)$/i.exec(request.get('authorization') || '');
     if (!tokenMatch) return response.status(401).json({ error: 'Invalid print-agent token' });
 
@@ -30,7 +27,7 @@ function createAgentLeaseRouter(pool) {
       const leaseResult = await pool.query(
         `UPDATE print_jobs
          SET claimed_at = NOW()
-         WHERE id = $1 AND shop_id = $2 AND claimed_by = 'print-agent' AND status IN ('claimed', 'printing')
+         WHERE id = $1 AND shop_id = $2 AND claimed_by = 'print-agent' AND status = 'claimed'
          RETURNING id`,
         [request.params.jobId, shop.id],
       );

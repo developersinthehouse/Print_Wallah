@@ -46,7 +46,7 @@ const store = {
   del(k) { try { localStorage.removeItem(k); } catch { /* private mode */ } },
 };
 const TERMINAL = new Set(['completed', 'cancelled']);
-const isTerminal = (o) => TERMINAL.has(o.status) || ['cancelled', 'rejected', 'failed'].includes(o.paymentStatus);
+const isTerminal = (o) => TERMINAL.has(o.status) || ['cancelled', 'rejected', 'failed'].includes(o.paymentStatus) && o.status !== 'failed';
 const isActiveOrder = (o) => !isTerminal(o) && Date.now() - new Date(o.createdAt).getTime() < ACTIVE_ORDER_MAX_AGE_MS;
 const loadImage = (url) => new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = () => rej(new Error('image')); img.src = url; });
 
@@ -57,11 +57,13 @@ function revokeUrls() { (C?.items || []).forEach((i) => i.url && URL.revokeObjec
 
 /* ---------- Shared UI: nudge, nav, footer ---------- */
 function nudge(message, { action, onAction } = {}) {
-  const el = document.querySelector('#nudge'); clearTimeout(timers.nudge);
-  el.innerHTML = `${icon('info', 40)}<p>${esc(message)}</p>${action ? `<button class="button button-primary button-small" type="button">${esc(action)}</button>` : ''}`;
-  el.classList.add('show');
-  el.querySelector('button')?.addEventListener('click', () => { el.classList.remove('show'); onAction?.(); });
-  timers.nudge = setTimeout(() => el.classList.remove('show'), 5200);
+  const el = document.querySelector('#nudge'); clearTimeout(timers.nudge); clearTimeout(el._hide);
+  el.innerHTML = `${icon('info', 20)}<p>${esc(message)}</p>${action ? `<button class="button button-primary button-small" type="button">${esc(action)}</button>` : ''}`;
+  if (el.showPopover && !popOpen(el)) { try { el.showPopover(); } catch { } }
+  requestAnimationFrame(() => el.classList.add('show'));
+  const hide = () => { el.classList.remove('show'); el._hide = setTimeout(() => { try { el.hidePopover?.(); } catch { } }, 260); };
+  el.querySelector('button')?.addEventListener('click', () => { hide(); onAction?.(); });
+  timers.nudge = setTimeout(hide, 5200);
 }
 function nudgeNeedsFile(what = 'option') {
   const photoFirst = C.cfg.mode === 'photo';
@@ -72,8 +74,8 @@ function nudgeNeedsFile(what = 'option') {
 }
 function setCustomerNav({ viewing = false } = {}) {
   const s = C.shop, active = viewing ? null : C.activeOrder;
-  const call = s.phone ? `<a class="nav-chip chip-compact" href="tel:${esc(s.phone.replace(/[^\d+]/g, ''))}" aria-label="Call ${esc(s.name)}" title="Call shop">${icon('phone', 20)}<span>Call shop</span></a>` : '';
-  const track = active ? `<a class="nav-chip" href="/shop/${encodeURIComponent(s.id)}?order=${encodeURIComponent(active.code)}" aria-label="Track order">${icon('printer', 20)}<span>Track order</span></a>` : '';
+  const call = s.phone ? `<a class="nav-link" href="tel:${esc(s.phone.replace(/[^\d+]/g, ''))}" aria-label="Call ${esc(s.name)}" title="Call shop">${icon('phone', 18)}<span>Call shop</span></a>` : '';
+  const track = active ? `<a class="nav-link" href="/shop/${encodeURIComponent(s.id)}?order=${encodeURIComponent(active.code)}" aria-label="Track order">${icon('printer', 18)}<span>Track order</span></a>` : '';
   setHeading("", track + call);
 }
 function footerHtml() {
@@ -81,15 +83,14 @@ function footerHtml() {
   const maps = s.address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([s.name, s.address, s.city].filter(Boolean).join(', '))}` : null;
   const tel = s.phone ? s.phone.replace(/[^\d+]/g, '') : '';
   return `<footer class="pw-footer"><div class="pw-footer-inner">
-    <section class="pf-brand"><img class="brand-logo" src="/assets/Print-Wallah_wordmark.png" alt="Print Wallah"><p class="tag">Upload, set up, pay and collect, with ${esc(s.name)}.</p></section>
-    <section class="pf-shop" aria-label="This shop"><h4>This shop</h4><strong>${esc(s.name)}</strong>${s.address || s.city ? `<p class="address">${esc([s.address, s.city].filter(Boolean).join(', '))}</p>` : ''}<div class="pf-actions">${tel ? `<a class="pf-pill" href="tel:${esc(tel)}">${icon('phone', 18)}<span>Call</span></a>` : ''}${maps ? `<a class="pf-pill" href="${maps}" target="_blank" rel="noopener">${icon('pin', 18)}<span>Maps</span></a>` : ''}</div></section>
-    <nav class="pf-links" aria-label="Quick links"><h4>Quick links</h4><ul><li><a href="#file-card" data-jump="file-card">Start a print</a></li><li><a href="#settings-card" data-jump="settings-card">Print settings</a></li>${active ? `<li><a href="/shop/${encodeURIComponent(s.id)}?order=${encodeURIComponent(active.code)}">Track my order</a></li>` : ''}<li><a href="/admin">Shop staff sign in</a></li></ul></nav>
+    <section class="pf-shop" aria-label="This shop"><span class="eyebrow">This shop</span><strong>${esc(s.name)}</strong>${s.address || s.city ? `<p>${esc([s.address, s.city].filter(Boolean).join(', '))}</p>` : ''}<div class="pf-actions">${tel ? `<a class="button button-light button-small" href="tel:${esc(tel)}">${icon('phone', 16)}<span>Call</span></a>` : ''}${maps ? `<a class="button button-light button-small" href="${maps}" target="_blank" rel="noopener">${icon('pin', 16)}<span>Maps</span></a>` : ''}</div></section>
+    <nav class="pf-links" aria-label="Quick links"><span class="eyebrow">Quick links</span><ul><li><a href="#file-card" data-jump="file-card">Start a print</a></li><li><a href="#settings-card" data-jump="settings-card">Print settings</a></li>${active ? `<li><a href="/shop/${encodeURIComponent(s.id)}?order=${encodeURIComponent(active.code)}">Track my order</a></li>` : ''}<li><a href="/admin">Shop staff sign in</a></li></ul></nav>
+    <section class="pf-brand"><img src="/assets/pw-wordmark-320.png" width="132" height="19" alt="Print Wallah"><p>Upload, set up, pay and collect, with ${esc(s.name)}.</p></section>
   </div>${legalFooterHtml()}</footer>`;
 }
 function wireJumps() { document.querySelectorAll('[data-jump]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); document.querySelector('#' + a.dataset.jump)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); })); }
-function creditLine() { return '<p class="countdown mt-5">Print Wallah &middot; Made by DEVELOPERS</p>'; }
-function errorScreen(title, message, retry = true) { return `<div class="login-wrap"><div class="login-card"><div class="status-art">${icon('empty')}</div><h1 style="text-align:center">${esc(title)}</h1><p class="lede" style="text-align:center">${esc(message)}</p>${retry ? '<button class="button" type="button" data-reload>Try again</button>' : ''}</div></div>`; }
-
+function creditLine() { return '<p class="credit">Print Wallah &middot; Made by DEVELOPERS</p>'; }
+function errorScreen(title, message, retry = true) { return `<section class="state-screen"><div class="state-card">${icon('empty', 40)}<h1>${esc(title)}</h1><p class="lede">${esc(message)}</p>${retry ? '<button class="button" type="button" data-reload>Try again</button>' : ''}</div></section>`; }
 /* ---------- Entry ---------- */
 function freshState(shop) {
   const pc = shop.printConfig;
@@ -152,19 +153,21 @@ function goHome() {
 function renderHome() {
   const s = C.shop, rate = Number(s.pricing.bw_a4) > 0 ? `B&amp;W A4 from ${money(s.pricing.bw_a4)}` : '';
   const a = C.activeOrder;
-  app.innerHTML = `<div class="page">
-    <section class="hero"><div><h1>${esc(s.name)}</h1>
-      <div class="where">${s.address || s.city ? `<span>${icon('pin', 18)}${esc([s.address, s.city].filter(Boolean).join(', '))}</span>` : ''}${s.phone ? `<a href="tel:${esc(s.phone.replace(/[^\d+]/g, ''))}">${icon('phone', 18)}${esc(s.phone)}</a>` : ''}${rate ? `<span>${icon('rupee', 18)}${rate}</span>` : ''}</div></div>
-      <ol class="steps" aria-label="How it works"><li>${icon('upload', 34)}Upload</li><li>${icon('sliders', 34)}Set up</li><li>${icon('pay', 34)}Pay</li><li>${icon('printer', 34)}Collect</li></ol></section>
-    <details class="fold"><summary>${icon('info', 18)}<span>Files are deleted after printing</span></summary><p>Print files are automatically deleted about 10 minutes after printing completes. Order and payment records are retained.</p></details>
-    ${C.notice ? `<div class="inline-notice ${C.notice.kind} mb" id="home-notice" style="margin-bottom:var(--s-5)">${esc(C.notice.text)}</div>` : ''}
-    ${s.printerOnline ? '' : `<div class="printer-note"><div class="pn-full inline-notice warn">The shop’s printer is offline right now. You can still order; it prints when the shop reconnects.</div><details class="pn-fold"><summary><i aria-hidden="true"></i><span>Printer is offline</span></summary><p>The shop’s printer is offline right now. You can still order; it prints when the shop reconnects.</p></details></div>`}
-    ${a ? `<div class="resume-banner">${icon('printer', 44)}<div><strong>You have an order in progress</strong><div class="subtext">${esc(a.code)} &middot; ${money(a.amount)} &middot; ${esc(orderStateText(a))}</div></div><a class="button button-primary button-small" href="/shop/${encodeURIComponent(s.id)}?order=${encodeURIComponent(a.code)}">View order</a></div>` : ''}
-    <div class="portal-grid"><div class="portal-col"><section class="card" id="file-card" style="order:1"></section><section class="card" id="settings-card" style="order:3"></section><section class="card hidden" id="edit-card" style="order:4"></section></div>
-    <div class="portal-col sticky-col"><section class="card" id="preview-card" style="order:2"></section><section class="card" id="summary-card" style="order:5"></section></div></div>
+  app.innerHTML = `<div class="portal">
+    <section class="shop-head"><div class="shop-id"><h1>${esc(s.name)}</h1>
+      <ul class="shop-meta">${s.address || s.city ? `<li>${icon('pin', 16)}<span>${esc([s.address, s.city].filter(Boolean).join(', '))}</span></li>` : ''}${s.phone ? `<li>${icon('phone', 16)}<a href="tel:${esc(s.phone.replace(/[^\d+]/g, ''))}">${esc(s.phone)}</a></li>` : ''}${rate ? `<li>${icon('rupee', 16)}<span>${rate}</span></li>` : ''}</ul></div>
+      ${s.printerOnline ? '<span class="pill online">Printer online</span>' : ''}</section>
+    <ol class="flow" id="flow" aria-label="How it works">${['Upload', 'Set up', 'Pay', 'Collect'].map((l, i) => `<li><span class="f-num">${i + 1}</span><span class="f-label">${l}</span></li>`).join('')}</ol>
+    ${C.notice ? `<div class="inline-notice ${C.notice.kind}" id="home-notice">${esc(C.notice.text)}</div>` : ''}
+    ${s.printerOnline ? '' : `<div class="inline-notice warn">The shop’s printer is offline right now. You can still order; it prints when the shop reconnects.</div>`}
+    ${a ? `<div class="resume">${icon('printer', 22)}<div><strong>You have an order in progress</strong><span>${esc(a.code)} &middot; ${money(a.amount)} &middot; ${esc(orderStateText(a))}</span></div><a class="button button-primary button-small" href="/shop/${encodeURIComponent(s.id)}?order=${encodeURIComponent(a.code)}">View order</a></div>` : ''}
+    <div class="portal-grid"><div class="canvas-col"><section class="card card-canvas" id="preview-card"></section></div>
+    <div class="inspector"><section class="card" id="file-card"></section><section class="card" id="settings-card"></section><section class="card hidden" id="edit-card"></section><section class="card" id="summary-card"></section></div></div>
     <div class="mobile-total hidden" id="mobile-total"></div></div>${footerHtml()}`;
   document.querySelector('#site-footer').classList.add('hidden');
   renderFileArea(); renderSettings(); renderEditor(); drawPreview(); renderSummary({}); wireJumps();
+  const sum = document.querySelector('#summary-card'), bar = document.querySelector('#mobile-total');
+  if ('IntersectionObserver' in window && sum && bar) { C.io?.disconnect(); C.io = new IntersectionObserver(([e]) => bar.classList.toggle('is-covered', e.isIntersecting), { threshold: 0.15 }); C.io.observe(sum); }
 }
 function orderStateText(o) {
   return ({ pending_payment: 'waiting for your UPI payment', payment_review: 'shop is confirming your payment', cash_confirmation_pending: 'pay cash at the counter', print_queued: 'in the print queue', printing: 'printing now', failed: 'needs the shop\'s attention' })[o.status] || 'in progress';
@@ -172,11 +175,18 @@ function orderStateText(o) {
 
 /* ---------- Upload ---------- */
 function renderFileArea() { C.items.length ? renderFileCard() : renderDropzone(); }
+/* Progress through the flow, derived from real state (file chosen, quote ready). */
+function updateFlow() {
+  const el = document.querySelector('#flow'); if (!el || !C) return;
+  const step = !hasFile() ? 1 : C.quote ? 3 : 2;
+  el.querySelectorAll('li').forEach((li, i) => { const n = i + 1; li.classList.toggle('is-active', n === step); li.classList.toggle('is-done', n < step); if (n === step) li.setAttribute('aria-current', 'step'); else li.removeAttribute('aria-current'); li.querySelector('.f-num').innerHTML = n < step ? icon('check', 13) : String(n); });
+}
 function renderDropzone() {
   const card = document.querySelector('#file-card'), photo = C.cfg.mode === 'photo', max = window.MAX_UPLOAD_MB || 30;
-  card.innerHTML = `<div class="card-title">${icon(photo ? 'photo' : 'doc')}<div><span class="step">Step 1</span><h2>${photo ? 'Choose your photos' : 'Choose your file'}</h2></div></div>
-    <label class="dropzone" id="dropzone">${icon('upload')}<input type="file" id="file-input" accept="${photo ? 'image/jpeg,image/png,.jpg,.jpeg,.png' : 'application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png'}" multiple><strong>${photo ? 'Tap to choose photos' : 'Tap to choose files'}</strong><span class="dz-types">${photo ? 'JPG or PNG' : 'PDF, JPG or PNG'} · up to ${max} MB each</span><span class="dz-more">${photoAvailable() && !photo ? 'Several photos can share one sheet' : 'Up to 10 files in one order'}</span></label>
-    <div class="form-error mt-4" id="upload-error"></div><div class="progress hidden" id="upload-progress"><span></span></div>`;
+  card.innerHTML = `<header class="card-head">${icon(photo ? 'photo' : 'doc')}<div><span class="step">Step 1</span><h2>${photo ? 'Choose your photos' : 'Choose your file'}</h2></div></header>
+    <label class="dropzone" id="dropzone"><span class="dz-icon">${icon('upload', 22)}</span><input type="file" id="file-input" accept="${photo ? 'image/jpeg,image/png,.jpg,.jpeg,.png' : 'application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png'}" multiple><strong>${photo ? 'Tap to choose photos' : 'Tap to choose files'}</strong><span class="dz-types">${photo ? 'JPG or PNG' : 'PDF, JPG or PNG'} · up to ${max} MB each</span><span class="dz-more">${photoAvailable() && !photo ? 'Several photos can share one sheet' : 'Up to 10 files in one order'}</span></label>
+    <div class="form-error" id="upload-error"></div><div class="upload-bar hidden" id="upload-progress"><span></span></div>
+    <p class="privacy-note">${icon('lock', 14)}<span>Print files are automatically deleted about 10 minutes after printing completes. Order and payment records are retained.</span></p>`;
   const zone = card.querySelector('#dropzone'), input = card.querySelector('#file-input');
   input.onchange = () => { if (input.files.length) handleFiles([...input.files]); input.value = ''; };
   ['dragenter', 'dragover'].forEach((ev) => zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.add('drag'); }));
@@ -270,8 +280,8 @@ function renderFileCard() {
   const pages = bundle ? C.items.reduce((sum, item) => sum + Number(item.upload.pages || 1), 0) : Number(main.upload.pages || 1);
   const name = many ? `${C.items.length} ${bundle ? 'files' : 'photos'}` : main.upload.fileName;
   const meta = bundle ? `${pages} total pages · one print order` : main.mime === 'application/pdf' ? `${main.upload.pages} page${main.upload.pages === 1 ? '' : 's'} | ${formatBytes(main.upload.size)}` : many ? 'Photos ready to print' : `${main.upload.width || main.px[0]} x ${main.upload.height || main.px[1]} px | ${formatBytes(main.upload.size)}`;
-  const fileList = bundle ? `<div class="file-meta mt-3">${C.items.map((item, i) => `<div class="file-line"><span class="file-name">${esc(item.upload.fileName)} · ${item.upload.pages || 1} page${Number(item.upload.pages || 1) === 1 ? '' : 's'}</span><button class="button button-light button-small" type="button" data-remove-document="${i}" aria-label="Remove ${esc(item.upload.fileName)}">Remove</button></div>`).join('')}</div>` : '';
-  document.querySelector('#file-card').innerHTML = `<div class="card-title">${icon(main.mime === 'application/pdf' ? 'doc' : 'photo')}<div><span class="step">Step 1</span><h2>${bundle ? 'Your files' : 'Your file'}</h2></div></div><div class="file-line"><div class="file-meta"><div class="file-name">${esc(name)}</div><div class="subtext">${esc(meta)}</div></div><button class="button button-light button-small" id="change-file" type="button">Change</button></div>${fileList}${C.previewFailed ? '<div class="inline-notice warn mt-4">This PDF could not be previewed here, but it can still be printed. The preview shows a blank page.</div>' : ''}${bundle ? '<div class="field-hint mt-3">The preview shows the first file; all files and pages are included in the combined order.</div>' : ''}`;
+  const fileList = bundle ? `<ul class="file-list">${C.items.map((item, i) => `<li><span class="file-name">${esc(item.upload.fileName)} · ${item.upload.pages || 1} page${Number(item.upload.pages || 1) === 1 ? '' : 's'}</span><button class="button button-quiet button-small" type="button" data-remove-document="${i}" aria-label="Remove ${esc(item.upload.fileName)}">Remove</button></li>`).join('')}</ul>` : '';
+  document.querySelector('#file-card').innerHTML = `<header class="card-head">${icon(main.mime === 'application/pdf' ? 'doc' : 'photo')}<div><span class="step">Step 1</span><h2>${bundle ? 'Your files' : 'Your file'}</h2></div><button class="button button-light button-small head-action" id="change-file" type="button">Change</button></header><div class="file-summary"><div class="file-meta"><div class="file-name">${esc(name)}</div><div class="subtext">${esc(meta)}</div></div></div>${fileList}${C.previewFailed ? `<div class="inline-notice warn mt-3">This PDF could not be previewed here, but it can still be printed. The preview shows a blank page.</div>` : ''}${bundle ? '<div class="field-hint mt-3">The preview shows the first file; all files and pages are included in the combined order.</div>' : ''}`;
   document.querySelector('#change-file').onclick = () => { revokeUrls(); C.items = []; C.quote = null; C.pdf = null; C.previewFailed = false; C.renderCache.clear(); renderDropzone(); renderSettings(); renderEditor(); drawPreview(); renderSummary({}); };
   document.querySelectorAll('[data-remove-document]').forEach((button) => button.addEventListener('click', async () => {
     const [removed] = C.items.splice(Number(button.dataset.removeDocument), 1);
@@ -280,7 +290,6 @@ function renderFileCard() {
     await setupDocument();
   }));
 }
-
 /* ---------- Settings (always visible, locked until a file exists) ---------- */
 const seg = (name, value, options) => `<div class="segmented" role="group" aria-label="${esc(name)}">${options.map(([v, label, disabled]) => `<button type="button" data-set="${name}" data-value="${esc(v)}" class="${String(value) === String(v) ? 'selected' : ''}" aria-pressed="${String(value) === String(v)}" ${disabled ? 'disabled' : ''}>${esc(label)}</button>`).join('')}</div>`;
 const hasFile = () => C.items.length > 0;
@@ -289,33 +298,31 @@ const isPdf = () => mainItem()?.mime === 'application/pdf';
 function renderSettings() {
   const { cfg, shop } = C, pc = shop.printConfig, main = mainItem(), locked = !hasFile();
   const sizeSelect = `<div class="field"><label for="paper-size">Paper size</label><select id="paper-size" data-select="paperSize">${pc.paperSizes.map((s) => `<option ${cfg.paperSize === s ? 'selected' : ''}>${s}</option>`).join('')}</select></div>`;
-  const orient = `<div class="field"><label>Orientation</label>${seg('orientation', cfg.orientation, [['portrait', 'Portrait'], ['landscape', 'Landscape']])}</div>`;
+  const orient = `<div class="field full"><label>Orientation</label>${seg('orientation', cfg.orientation, [['portrait', 'Portrait'], ['landscape', 'Landscape']])}</div>`;
+  const group = (title, inner) => `<div class="sgroup"><h3 class="sgroup-title">${title}</h3><div class="settings-grid">${inner}</div></div>`;
   let body;
   if (cfg.mode === 'photo') {
     const lay = photoLayout(shop.photoSizes.find((p) => p.id === cfg.photoSize), cfg.paperSize, cfg.orientation);
     const total = C.items.reduce((n, i) => n + i.quantity, 0) || 0, sheets = Math.ceil(total / lay.capacity);
-    body = `<div class="settings-grid"><div class="field"><label for="photo-size">Photo size</label><select id="photo-size" data-select="photoSize">${shop.photoSizes.map((p) => `<option value="${p.id}" ${cfg.photoSize === p.id ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}</select></div>${sizeSelect}
-      <div class="field"><label>Photo fit</label>${seg('photoFit', cfg.photoFit, [['cover', 'Fill (crop)'], ['contain', 'Fit whole photo']])}</div>${orient}
-      <div class="field full"><label>Photos and how many of each</label>${locked ? '<div class="field-hint">Your photos will be listed here with a quantity for each.</div>' : `<div class="photo-list">${C.items.map((it, i) => `<div class="photo-row ${i === C.editing ? 'editing' : ''}"><img src="${it.url}" alt=""><div class="file-meta"><div class="file-name">${esc(it.upload.fileName)}</div>${PhotoEdit.isEdited(it.edit) ? '<span class="edited-dot">Edited</span>' : ''}</div><div class="stepper"><button type="button" data-qty="${i}" data-delta="-1" aria-label="Fewer">-</button><input type="number" inputmode="numeric" min="1" max="500" value="${it.quantity}" data-qty-input="${i}" aria-label="Quantity of ${esc(it.upload.fileName)}"><button type="button" data-qty="${i}" data-delta="1" aria-label="More">+</button></div>${C.items.length > 1 ? `<button type="button" class="button button-light button-small remove" data-remove="${i}">Remove</button>` : ''}</div>`).join('')}</div>
-        ${C.items.length < 12 ? '<label class="button button-light button-small mt-3" style="cursor:pointer;width:fit-content">Add more photos<input type="file" id="add-photos" accept="image/jpeg,image/png" multiple style="position:absolute;width:1px;height:1px;opacity:0"></label>' : ''}`}
-        <div class="field-hint mt-3" id="photo-summary">${locked ? '' : `${total} photo${total === 1 ? '' : 's'}. `}${lay.capacity} fit on one ${cfg.paperSize} sheet${lay.rotated ? ' (turned to fit more)' : ''}${locked ? '.' : `, so ${sheets} sheet${sheets === 1 ? '' : 's'}.`}</div></div>
-      <div class="full field-hint">Printed in colour on glossy paper, with thin guide lines to cut along.</div></div>`;
+    body = group('Sheet', `<div class="field"><label for="photo-size">Photo size</label><select id="photo-size" data-select="photoSize">${shop.photoSizes.map((p) => `<option value="${p.id}" ${cfg.photoSize === p.id ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}</select></div>${sizeSelect}
+      <div class="field full"><label>Photo fit</label>${seg('photoFit', cfg.photoFit, [['cover', 'Fill (crop)'], ['contain', 'Fit whole photo']])}</div>${orient}`)
+      + group('Photos', `<div class="field full"><label>Photos and how many of each</label>${locked ? '<div class="field-hint">Your photos will be listed here with a quantity for each.</div>' : `<div class="photo-list">${C.items.map((it, i) => `<div class="photo-row ${i === C.editing ? 'editing' : ''}"><img src="${it.url}" alt=""><div class="file-meta"><div class="file-name">${esc(it.upload.fileName)}</div>${PhotoEdit.isEdited(it.edit) ? '<span class="edited-dot">Edited</span>' : ''}</div><div class="stepper"><button type="button" data-qty="${i}" data-delta="-1" aria-label="Fewer">${icon('minus', 16)}</button><input type="number" inputmode="numeric" min="1" max="500" value="${it.quantity}" data-qty-input="${i}" aria-label="Quantity of ${esc(it.upload.fileName)}"><button type="button" data-qty="${i}" data-delta="1" aria-label="More">${icon('plus', 16)}</button></div>${C.items.length > 1 ? `<button type="button" class="button button-quiet button-small remove" data-remove="${i}">Remove</button>` : ''}</div>`).join('')}</div>
+        ${C.items.length < 12 ? `<label class="button button-light button-small add-photos">${icon('plus', 16)}<span>Add more photos</span><input type="file" id="add-photos" class="sr-only" accept="image/jpeg,image/png" multiple></label>` : ''}`}
+        <div class="field-hint" id="photo-summary">${locked ? '' : `${total} photo${total === 1 ? '' : 's'}. `}${lay.capacity} fit on one ${cfg.paperSize} sheet${lay.rotated ? ' (turned to fit more)' : ''}${locked ? '.' : `, so ${sheets} sheet${sheets === 1 ? '' : 's'}.`}</div></div>
+      <div class="full field-hint">Printed in colour on glossy paper, with thin guide lines to cut along.</div>`);
   } else {
     const documentBundle = C.items.length > 1;
     const pageLabel = documentBundle ? `All ${C.items.reduce((sum, item) => sum + Number(item.upload.pages || 1), 0)} pages across ${C.items.length} files` : locked || !isPdf() ? 'All pages' : `All ${main.upload.pages}`;
     const range = `<div class="field full"><label>Pages</label>${seg('rangeMode', cfg.rangeMode, [['all', pageLabel], ['custom', 'Choose pages', documentBundle]])}${cfg.rangeMode === 'custom' ? `<input id="page-range" value="${esc(cfg.pageRange === 'all' ? '' : cfg.pageRange)}" placeholder="Example: 1-3, 5" inputmode="text" autocomplete="off" aria-describedby="range-msg"><div class="field-hint" id="range-msg"></div>` : ''}</div>`;
-    body = `<div class="settings-grid">${range}
-      <div class="field"><label for="copies">Copies</label><div class="stepper"><button type="button" data-copies="-1" aria-label="Fewer copies">-</button><input id="copies" type="number" inputmode="numeric" min="1" max="500" value="${cfg.copies}"><button type="button" data-copies="1" aria-label="More copies">+</button></div></div>
-      <div class="field"><label>Colour</label>${seg('color', cfg.color, [[false, 'Black and white'], [true, 'Colour', !pc.color]])}</div>
-      ${sizeSelect}
-      <div class="field"><label for="paper-type">Paper type</label><select id="paper-type" data-select="paperType">${pc.paperTypes.map((t) => `<option value="${t}" ${cfg.paperType === t ? 'selected' : ''}>${t === 'normal' ? 'Normal' : 'Glossy'}</option>`).join('')}</select></div>
-      <div class="field"><label>Sides</label>${seg('duplex', cfg.duplex, [[false, 'Single-sided'], [true, 'Double-sided', !pc.duplex || cfg.paperType !== 'normal']])}</div>${orient}
-      <div class="field full"><label>Scaling</label>${seg('scaling', cfg.scaling, [['fit', 'Fit to page'], ['fill', 'Fill page'], ['actual', 'Actual size']])}<div class="field-hint">${{ fit: 'Whole page fits inside the printable area.', fill: 'Covers the whole sheet; edges may be cropped.', actual: 'Real size from the top left; large pages are cut off.' }[cfg.scaling]}</div></div></div>`;
+    body = group('Quantity', `${range}<div class="field"><label for="copies">Copies</label><div class="stepper"><button type="button" data-copies="-1" aria-label="Fewer copies">${icon('minus', 16)}</button><input id="copies" type="number" inputmode="numeric" min="1" max="500" value="${cfg.copies}"><button type="button" data-copies="1" aria-label="More copies">${icon('plus', 16)}</button></div></div>`)
+      + group('Print', `<div class="field full"><label>Colour</label>${seg('color', cfg.color, [[false, 'Black and white'], [true, 'Colour', !pc.color]])}</div><div class="field full"><label>Sides</label>${seg('duplex', cfg.duplex, [[false, 'Single-sided'], [true, 'Double-sided', !pc.duplex || cfg.paperType !== 'normal']])}</div>`)
+      + group('Paper', `${sizeSelect}<div class="field"><label for="paper-type">Paper type</label><select id="paper-type" data-select="paperType">${pc.paperTypes.map((t) => `<option value="${t}" ${cfg.paperType === t ? 'selected' : ''}>${t === 'normal' ? 'Normal' : 'Glossy'}</option>`).join('')}</select></div>${orient}`)
+      + group('Layout', `<div class="field full"><label>Scaling</label>${seg('scaling', cfg.scaling, [['fit', 'Fit to page'], ['fill', 'Fill page'], ['actual', 'Actual size']])}<div class="field-hint">${{ fit: 'Whole page fits inside the printable area.', fill: 'Covers the whole sheet; edges may be cropped.', actual: 'Real size from the top left; large pages are cut off.' }[cfg.scaling]}</div></div>`);
   }
   const allImages = C.items.every((item) => item.mime !== 'application/pdf');
-  const modeToggle = photoAvailable() && (locked || allImages) ? `<div class="field mb-4" style="margin-bottom:var(--s-5)"><label>What are you printing?</label>${seg('mode', cfg.mode, [['document', 'Documents / pictures'], ['photo', 'Photo sheet']])}</div>` : '';
+  const modeToggle = photoAvailable() && (locked || allImages) ? `<div class="field mode-toggle"><label>What are you printing?</label>${seg('mode', cfg.mode, [['document', 'Documents / pictures'], ['photo', 'Photo sheet']])}</div>` : '';
   const card = document.querySelector('#settings-card');
-  card.innerHTML = `<div class="card-title">${icon('sliders')}<div><span class="step">Step 2</span><h2>Print settings</h2></div></div>${modeToggle}<div class="${locked ? 'locked-zone' : ''}" id="settings-zone">${body}${locked ? '<div class="lock-cover" id="lock-cover" aria-hidden="true"></div>' : ''}</div>`;
+  card.innerHTML = `<header class="card-head">${icon('sliders')}<div><span class="step">Step 2</span><h2>Print settings</h2></div></header>${modeToggle}<div class="${locked ? 'locked-zone' : ''}" id="settings-zone">${body}${locked ? '<div class="lock-cover" id="lock-cover" aria-hidden="true"></div>' : ''}</div>`;
   wireSettings();
   if (cfg.rangeMode === 'custom' && !locked) validateRange();
 }
@@ -391,11 +398,11 @@ function renderEditor() {
   const it = C.items[C.editing], e = PhotoEdit.cleanEdit(it.edit), photo = geometryActive(), many = C.items.length > 1;
   const slider = (key, label, min, max, step) => `<div class="slider"><label for="ed-${key}">${label}</label><output id="out-${key}">${fmtVal(key, e[key])}</output><input id="ed-${key}" type="range" min="${min}" max="${max}" step="${step}" value="${e[key]}" data-edit="${key}"></div>`;
   card.classList.remove('hidden');
-  card.innerHTML = `<div class="card-title">${icon('photo')}<div><span class="step">Optional</span><h2>Photo editing</h2></div></div>
-    <p class="subtext mb-4" style="margin-bottom:var(--s-4)">Quick fixes before printing. The edited photo is what gets sent to the printer.</p>
-    ${many ? `<div class="tool-row" style="margin-bottom:var(--s-4)" role="group" aria-label="Choose photo to edit">${C.items.map((p, i) => `<button type="button" class="chip ${i === C.editing ? 'selected' : ''}" data-pick="${i}">Photo ${i + 1}${PhotoEdit.isEdited(p.edit) ? ' *' : ''}</button>`).join('')}</div>` : ''}
-    <div class="editor"><div class="edit-frame-wrap"><div class="edit-frame" id="edit-frame"><canvas id="edit-canvas"></canvas></div>${photo ? '<div class="field-hint" style="text-align:center">Zoom in, then drag the photo to reposition it.</div>' : ''}</div>
-    <div class="edit-controls"><div class="tool-row"><button type="button" class="chip" data-tool="rot-left">Rotate left</button><button type="button" class="chip" data-tool="rot-right">Rotate right</button><button type="button" class="chip ${e.bw ? 'selected' : ''}" data-tool="bw" aria-pressed="${e.bw}">Black &amp; white</button></div>
+  card.innerHTML = `<div class="card-head">${icon('photo')}<div><span class="step">Optional</span><h2>Photo editing</h2></div></div>
+    <p class="subtext mb-4">Quick fixes before printing. The edited photo is what gets sent to the printer.</p>
+    ${many ? `<div class="tool-row mb-4" role="group" aria-label="Choose photo to edit">${C.items.map((p, i) => `<button type="button" class="chip ${i === C.editing ? 'selected' : ''}" data-pick="${i}">Photo ${i + 1}${PhotoEdit.isEdited(p.edit) ? ' *' : ''}</button>`).join('')}</div>` : ''}
+    <div class="editor"><div class="edit-frame-wrap"><div class="edit-frame" id="edit-frame"><canvas id="edit-canvas"></canvas></div>${photo ? '<div class="field-hint center">Zoom in, then drag the photo to reposition it.</div>' : ''}</div>
+    <div class="edit-controls"><div class="tool-row"><button type="button" class="chip" data-tool="rot-left">${icon('rotate-left', 16)}<span>Rotate left</span></button><button type="button" class="chip" data-tool="rot-right">${icon('rotate-right', 16)}<span>Rotate right</span></button><button type="button" class="chip ${e.bw ? 'selected' : ''}" data-tool="bw" aria-pressed="${e.bw}">Black &amp; white</button></div>
       ${photo ? `<div class="stack-sm"><div class="label-caption">Photo fit</div>${seg('photoFit', C.cfg.photoFit, [['cover', 'Fill (crop)'], ['contain', 'Fit whole photo']])}</div>${C.cfg.photoFit === 'cover' ? slider('zoom', 'Zoom', 1, 4, 0.05) : ''}` : ''}
       ${SLIDERS.map(([k, l]) => slider(k, l, k === 'sharpness' ? 0 : -100, 100, 1)).join('')}
       <div class="tool-row"><button type="button" class="button button-light button-small" data-tool="reset">Reset adjustments</button>${many ? '<button type="button" class="button button-light button-small" data-tool="all">Apply to all photos</button>' : ''}</div></div></div>`;
@@ -467,9 +474,10 @@ async function drawPreview() {
   card.classList.toggle('is-empty', !hasF);
   const [pw0, ph0] = PAPER_MM[cfg.paperSize] || PAPER_MM.A4, landscape = cfg.orientation === 'landscape';
   const [sw, sh] = landscape ? [ph0, pw0] : [pw0, ph0];
-  if (!card.querySelector('.preview-stage')) card.innerHTML = `<div class="card-title">${icon('printer')}<div><span class="step">Live preview</span><h2>How it will print</h2></div></div><div class="preview-stage" id="preview-stage"></div><div class="preview-caption" id="preview-caption"></div>`;
-  const stage = card.querySelector('#preview-stage');
-  const avail = Math.max(180, Math.min((stage.clientWidth || 320) - 36, landscape ? 400 : 330));
+  if (!card.querySelector('.preview-stage')) card.innerHTML = `<div class="card-head">${icon('printer')}<div><span class="step">Live preview</span><h2>How it will print</h2></div></div><div class="preview-stage" id="preview-stage"></div><div class="preview-caption" id="preview-caption"></div>`;
+  const stage = card.querySelector('#preview-stage'); wireTilt(stage);
+  const wide = innerWidth >= 1000, byHeight = wide ? Math.max(280, innerHeight - 340) * (sw / sh) : Infinity;
+  const avail = Math.max(180, Math.min((stage.clientWidth || 320) - 36, landscape ? (wide ? 560 : 400) : (wide ? 460 : 330), byHeight));
   const k = avail / sw, W = Math.round(sw * k), H = Math.round(sh * k), pm = PRINTER_MARGIN_MM * k;
   let inner = '', label = '', caption = '', warn = '', nav = '', copiesNote = '', empty = false, cellCanvases = [];
   const problem = configProblem();
@@ -526,14 +534,21 @@ async function drawPreview() {
     if (cfg.orientation === 'landscape' && cw0 < ch0 && cfg.scaling !== 'actual') warn = warn || 'This page is upright but the paper is landscape, so it prints smaller. Choose Portrait to use more of the sheet.';
   }
   if (problem) warn = problem;
-  const emptyArt = empty ? `<div class="preview-empty" style="position:absolute;inset:0;justify-content:center;max-width:none;padding:0 12%">${icon('empty')}<span class="subtext" style="color:#6b7280">Your document appears here</span></div>` : '';
+  const emptyArt = empty ? `<div class="preview-empty">${icon('empty', 34)}<span>Your document appears here</span></div>` : '';
   stage.innerHTML = `<div class="stack-paper ${copiesNote}" style="width:${W}px"><div class="sheet ${cfg.color || cfg.mode === 'photo' ? '' : 'bw'}" style="width:${W}px;height:${H}px">${inner}${emptyArt}${label ? `<span class="sheet-label">${esc(label)}</span>` : ''}</div></div>${nav}`;
   const cv = stage.querySelector('#pv-canvas'); if (cv && C._canvasSrc) cv.getContext('2d').drawImage(C._canvasSrc, 0, 0);
   if (cellCanvases.items) stage.querySelectorAll('canvas[data-ci]').forEach((c) => { const it = cellCanvases.items[Number(c.dataset.ci)], src = editedCanvas(it, cellCanvases.px); c.width = src.width; c.height = src.height; c.getContext('2d').drawImage(src, 0, 0); });
   stage.querySelectorAll('[data-nav]').forEach((b) => b.onclick = () => { C.previewIndex = Math.max(0, C.previewIndex + Number(b.dataset.nav)); drawPreview(); });
-  card.querySelector('#preview-caption').innerHTML = `${esc(caption)}${warn ? `<div class="preview-warn">${esc(warn)}</div>` : ''}<div class="subtext mt-2">Approximate · dashed line marks the printable area.</div>`;
+  card.querySelector('#preview-caption').innerHTML = `${esc(caption)}${warn ? `<div class="preview-warn">${icon('alert', 16)}<span>${esc(warn)}</span></div>` : ''}<div class="preview-foot">Approximate · dashed line marks the printable area.</div>`;
 }
-const navHtml = (i, n, noun) => `<div class="preview-nav"><button class="button button-light button-small" data-nav="-1" ${i <= 1 ? 'disabled' : ''} aria-label="Previous ${noun}">&lsaquo;</button><span class="subtext">${noun[0].toUpperCase() + noun.slice(1)} ${i} of ${n}</span><button class="button button-light button-small" data-nav="1" ${i >= n ? 'disabled' : ''} aria-label="Next ${noun}">&rsaquo;</button></div>`;
+const navHtml = (i, n, noun) => `<div class="preview-nav"><button class="button button-light button-small button-icon" data-nav="-1" ${i <= 1 ? 'disabled' : ''} aria-label="Previous ${noun}">${icon('chevron-left', 18)}</button><span>${noun[0].toUpperCase() + noun.slice(1)} ${i} of ${n}</span><button class="button button-light button-small button-icon" data-nav="1" ${i >= n ? 'disabled' : ''} aria-label="Next ${noun}">${icon('chevron-right', 18)}</button></div>`;
+/* A very small pointer-driven tilt on the paper (fine pointers only, never with reduced motion). */
+function wireTilt(stage) {
+  if (stage._tilt || !matchMedia('(hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference)').matches) return;
+  stage._tilt = true; let raf = 0;
+  stage.addEventListener('pointermove', (e) => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => { const r = stage.getBoundingClientRect(), x = (e.clientX - r.left) / r.width - .5, y = (e.clientY - r.top) / r.height - .5; stage.style.setProperty('--ry', `${(x * 7).toFixed(2)}deg`); stage.style.setProperty('--rx', `${(-y * 6).toFixed(2)}deg`); }); });
+  stage.addEventListener('pointerleave', () => { cancelAnimationFrame(raf); stage.style.setProperty('--rx', '0deg'); stage.style.setProperty('--ry', '0deg'); });
+}
 window.addEventListener('resize', () => { clearTimeout(timers.resize); timers.resize = setTimeout(() => { if (C?.cfg && document.querySelector('#preview-stage')) drawPreview(); }, 200); });
 
 /* ---------- Price and checkout ---------- */
@@ -569,13 +584,13 @@ function renderSummary({ loading, error, expired }) {
   const card = document.querySelector('#summary-card'), bar = document.querySelector('#mobile-total'); if (!card) return;
   const q = C.quote, { cfg, shop } = C, file = hasFile();
   const sheetWord = cfg.mode === 'photo' ? `${q?.sheets || 0} photo sheet${q?.sheets === 1 ? '' : 's'}` : `${q?.pages || 0} page${q?.pages === 1 ? '' : 's'} x ${q?.copies || 0} cop${q?.copies === 1 ? 'y' : 'ies'}`;
-  const rows = q ? `<div class="quote-row"><span>${esc(sheetWord)}</span><strong>${q.printablePages ? `${q.printablePages * (q.copies || 1)} sheet${q.printablePages * (q.copies || 1) === 1 ? '' : 's'}` : ''}</strong></div><div class="quote-row"><span>Rate per sheet</span><strong>${money(q.rate)}</strong></div>${q.base && q.photoCharge ? `<div class="quote-row"><span>Printing</span><strong>${money(q.base)}</strong></div>` : ''}${q.photoCharge ? `<div class="quote-row"><span>Photo sheets (${q.sheets})</span><strong>${money(q.photoCharge)}</strong></div>` : ''}<div class="quote-total"><span>Total</span><span>${money(q.total)}</span></div>` : '';
+  const rows = q ? `<div class="quote-row"><span>${esc(sheetWord)}</span><strong>${q.printablePages ? `${q.printablePages * (q.copies || 1)} sheet${q.printablePages * (q.copies || 1) === 1 ? '' : 's'}` : ''}</strong></div><div class="quote-row"><span>Rate per sheet</span><strong>${money(q.rate)}</strong></div>${q.base && q.photoCharge ? `<div class="quote-row"><span>Printing</span><strong>${money(q.base)}</strong></div>` : ''}${q.photoCharge ? `<div class="quote-row"><span>Photo sheets (${q.sheets})</span><strong>${money(q.photoCharge)}</strong></div>` : ''}<div class="quote-total"><span>Total</span><strong>${money(q.total)}</strong></div>` : '';
   const ready = Boolean(q) && !error && !C.submitting, locked = !file;
-  card.innerHTML = `<div class="card-title">${icon('pay')}<div><span class="step">Step 3</span><h2>Pay and send</h2></div></div>
+  card.innerHTML = `<header class="card-head">${icon('pay')}<div><span class="step">Step 3</span><h2>Pay and send</h2></div></header>
     <div class="stack">
-    ${locked ? `<div class="price-empty">${icon('rupee')}<span>Your price appears once you add a file.</span></div>` : ''}
-    ${loading ? '<div class="loading" style="padding:0"><span class="spinner"></span> Calculating price</div>' : ''}${error ? `<div class="inline-notice bad" role="alert">${esc(error)}</div>${expired ? '<button class="button button-light" id="reselect" type="button">Choose file again</button>' : ''}` : ''}${rows ? `<div>${rows}</div>` : ''}
-    <details class="fold fold-form" ${C.name || C.phone ? 'open' : ''}><summary>${icon('phone', 18)}<span>Add name or phone <em>(optional)</em></span></summary><div class="settings-grid"><div class="field"><label for="cust-name">Your name</label><input id="cust-name" maxlength="100" autocomplete="name" value="${esc(C.name || '')}"></div><div class="field"><label for="cust-phone">Phone</label><input id="cust-phone" maxlength="40" inputmode="tel" autocomplete="tel" value="${esc(C.phone || '')}"></div></div></details>
+    ${locked ? `<div class="price-empty">${icon('rupee', 18)}<span>Your price appears once you add a file.</span></div>` : ''}
+    ${loading ? '<div class="loading is-inline"><span class="spinner" aria-hidden="true"></span><span>Calculating price</span></div>' : ''}${error ? `<div class="inline-notice bad" role="alert">${esc(error)}</div>${expired ? '<button class="button button-light" id="reselect" type="button">Choose file again</button>' : ''}` : ''}${rows ? `<div class="quote">${rows}</div>` : ''}
+    <details class="fold" ${C.name || C.phone ? 'open' : ''}><summary>${icon('user', 18)}<span>Add name or phone <em>(optional)</em></span>${icon('chevron-down', 16)}</summary><div class="settings-grid fold-body"><div class="field"><label for="cust-name">Your name</label><input id="cust-name" maxlength="100" autocomplete="name" value="${esc(C.name || '')}"></div><div class="field"><label for="cust-phone">Phone</label><input id="cust-phone" maxlength="40" inputmode="tel" autocomplete="tel" value="${esc(C.phone || '')}"></div></div></details>
     <div class="${locked ? 'locked-zone' : ''}" id="pay-zone"><div class="pay-buttons"><button class="button button-primary button-lg" id="pay-upi" type="button" ${ready && shop.upiConfigured ? '' : 'disabled'}>Pay with UPI</button><button class="button button-lg" id="pay-cash" type="button" ${ready ? '' : 'disabled'}>Pay with cash</button></div>${locked ? '<div class="lock-cover" id="pay-cover" aria-hidden="true"></div>' : ''}</div>
     <div class="form-error" id="order-error" role="alert"></div>
     <div class="pay-note">${shop.upiConfigured ? 'Printing starts after the shop confirms your payment.' : 'This shop has not set up UPI. Pay cash at the counter; printing starts once the shop confirms.'}</div></div>`;
@@ -583,10 +598,9 @@ function renderSummary({ loading, error, expired }) {
   card.querySelector('#cust-name').oninput = (e) => { C.name = e.target.value; }; card.querySelector('#cust-phone').oninput = (e) => { C.phone = e.target.value; };
   card.querySelector('#pay-cover')?.addEventListener('click', () => nudgeNeedsFile('step'));
   card.querySelector('#pay-upi').onclick = () => submitOrder('upi'); card.querySelector('#pay-cash').onclick = () => submitOrder('cash');
-  if (bar) { bar.classList.toggle('hidden', !q); bar.innerHTML = q ? `<div><div class="subtext">Total</div><strong style="font-size:1.15rem">${money(q.total)}</strong></div><a class="button button-primary" href="#summary-card">Pay and send</a>` : ''; }
+  if (bar) { bar.classList.toggle('hidden', !q); bar.innerHTML = q ? `<div class="mt-total"><span>Total</span><strong>${money(q.total)}</strong></div><a class="button button-primary" href="#summary-card">Pay and send</a>` : ''; }
+  updateFlow();
 }
-
-// Edited photos are rendered at print resolution with the same code as the preview, uploaded, and those uploads are what the order prints.
 async function bakeEdited(setStatus) {
   if (!editingActive()) return null;
   const photo = geometryActive(), aspect = frameAspect(), dims = photo ? C.shop.photoSizes.find((p) => p.id === C.cfg.photoSize) : null;
@@ -633,32 +647,39 @@ async function submitOrder(method) {
 }
 
 /* ---------- Order status, UPI and cash ---------- */
+function trackerHtml(o) {
+  const st = o.status, idx = { pending_payment: 1, payment_review: 1, cash_confirmation_pending: 1, print_queued: 2, printing: 2, failed: 2, completed: 4 }[st];
+  if (idx == null) return '';
+  return `<ol class="track" aria-label="Order progress">${['Order placed', 'Payment', 'Printing', 'Ready'].map((l, i) => `<li class="${i < idx ? 'is-done' : i === idx ? (st === 'failed' ? 'is-bad' : 'is-active') : ''}"><i aria-hidden="true"></i><span>${l}</span></li>`).join('')}</ol>`;
+}
 function showOrder(order) {
   clearTimers(); C.order = order;
   const s = C.shop, st = order.status;
   if (isTerminal(order)) store.del(orderKey(s.id)); else store.set(orderKey(s.id), order.code);
   C.activeOrder = isActiveOrder(order) ? order : null; setCustomerNav({ viewing: true });
   document.querySelector('#site-footer').classList.add('hidden');
+  const tone = st === 'completed' ? 'ok' : st === 'failed' ? 'bad' : isTerminal(order) ? 'mute' : '';
   const homeBtn = `<button class="button button-light" id="back-home" type="button">Back to home</button>`;
-  const head = (art, title, text) => `<div class="status-art">${icon(art, 96)}</div><h1>${esc(title)}</h1>${text ? `<p class="lede">${text}</p>` : ''}`;
+  const head = (art, title, text) => `<div class="status-mark ${tone}">${icon(art, 30)}</div><h1>${esc(title)}</h1>${text ? `<p class="lede">${text}</p>` : ''}${trackerHtml(order)}`;
   const detailRows = `<dt>File</dt><dd>${esc(order.fileName || 'Document')}</dd><dt>Amount</dt><dd>${money(order.amount)}</dd><dt>Payment</dt><dd>${order.paymentMethod === 'upi' ? 'UPI' : 'Cash'}</dd>`;
   const codeRow = `<dt>Order code</dt><dd class="mono">${esc(order.code)}</dd>`;
-  const summary = `<dl class="kv">${codeRow}${detailRows}</dl>`, summaryBigCode = `<dl class="kv">${detailRows}</dl>`;
+  const codeBlock = `<div class="code-block"><div><span class="code-label">Order code</span><strong class="mono">${esc(order.code)}</strong></div><button class="button button-light button-small" type="button" data-copy="${esc(order.code)}" aria-label="Copy order code">${icon('copy', 16)}<span>Copy</span></button></div>`;
+  const summary = `<dl class="kv">${codeRow}${detailRows}</dl>`, bigCode = `${codeBlock}<dl class="kv">${detailRows}</dl>`;
   let body = '', completing = false;
   if (st === 'completed') {
     completing = true;
-    body = `${head('success', 'Printed and ready', `Collect your order from ${esc(s.name)}. Show the order code if asked.`)}<div class="success-code">${esc(order.code)}</div>${summaryBigCode}<div class="stack-sm"><button class="button button-primary button-lg" id="back-home" type="button">Back to home</button><p class="countdown" id="countdown">Taking you back to the home page in ${COMPLETE_RETURN_SECONDS} seconds. <button class="text-button" id="stay" type="button">Stay on this page</button></p></div>`;
+    body = `${head('success', 'Printed and ready', `Collect your order from ${esc(s.name)}. Show the order code if asked.`)}${bigCode}<div class="stack-sm"><button class="button button-primary button-lg" id="back-home" type="button">Back to home</button><p class="countdown" id="countdown">Taking you back to the home page in ${COMPLETE_RETURN_SECONDS} seconds. <button class="text-button" id="stay" type="button">Stay on this page</button></p></div>`;
   } else if (isTerminal(order)) {
     const rejected = ['rejected', 'failed'].includes(order.paymentStatus);
     body = `${head('empty', rejected ? 'Payment not confirmed' : 'Order cancelled', rejected ? `The shop could not find your payment, so this order was not printed. If money left your account, contact ${esc(s.name)}${order.shopPhone ? ` on ${esc(order.shopPhone)}` : ''} and quote the order code.` : 'This order will not be printed.')}${summary}<button class="button button-primary button-lg" id="back-home" type="button">Back to home</button>`;
   } else if (st === 'pending_payment') body = upiScreen(order, head);
-  else if (st === 'payment_review') body = `${head('wait', 'Waiting for the shop to confirm', `You told the shop you paid ${money(order.amount)}. The shop checks its UPI account and then sends your file to print. This page updates by itself.`)}${summary}${order.reference ? `<div class="inline-notice mb-4">Transaction reference sent: <span class="mono">${esc(order.reference)}</span></div>` : ''}<div id="live-note"></div><p class="pay-note mt-4">Nothing has been printed yet. If this takes long, show the order code at the counter${order.shopPhone ? ` or call ${esc(order.shopPhone)}` : ''}.</p><div class="mt-5">${homeBtn}</div>`;
-  else if (st === 'cash_confirmation_pending') body = `${head('pay', 'Pay cash at the counter', `Show this code at ${esc(s.name)}. Printing starts after cash is confirmed.`)}<div class="success-code">${esc(order.code)}</div>${summaryBigCode}<div id="live-note"></div><div class="cluster mt-5">${homeBtn}<button class="button button-danger" id="cancel-order" type="button">Cancel this order</button></div>`;
-  else if (st === 'print_queued') body = `${head('printer', 'Payment confirmed', 'Your file is in the shop\'s print queue.')}${summary}<div id="live-note"></div><div class="mt-5">${homeBtn}</div>`;
-  else if (st === 'printing') body = `${head('printer', 'Printing now', 'Your document is being printed. It will be ready at the counter shortly.')}${summary}<div id="live-note"></div><div class="mt-5">${homeBtn}</div>`;
-  else if (st === 'failed') body = `${head('info', 'There was a problem printing', `The shop has been told. Show the order code to ${esc(s.name)}${order.shopPhone ? ` or call ${esc(order.shopPhone)}` : ''} and they will retry it.`)}<div class="success-code">${esc(order.code)}</div>${summaryBigCode}<div id="live-note"></div><div class="mt-5">${homeBtn}</div>`;
-  else body = `${head('wait', 'Order received', 'The shop is processing your order.')}${summary}<div id="live-note"></div><div class="mt-5">${homeBtn}</div>`;
-  app.innerHTML = `<div class="page"><section class="card status-card"><div id="net-banner" class="inline-notice warn hidden mb-4" style="margin-bottom:var(--s-4)" role="status">Connection lost. Retrying...</div>${body}</section>${creditLine()}</div>`;
+  else if (st === 'payment_review') body = `${head('wait', 'Waiting for the shop to confirm', `You told the shop you paid ${money(order.amount)}. The shop checks its UPI account and then sends your file to print. This page updates by itself.`)}${summary}${order.reference ? `<div class="inline-notice">Transaction reference sent: <span class="mono">${esc(order.reference)}</span></div>` : ''}<div id="live-note"></div><p class="pay-note">Nothing has been printed yet. If this takes long, show the order code at the counter${order.shopPhone ? ` or call ${esc(order.shopPhone)}` : ''}.</p><div class="status-actions">${homeBtn}</div>`;
+  else if (st === 'cash_confirmation_pending') body = `${head('pay', 'Pay cash at the counter', `Show this code at ${esc(s.name)}. Printing starts after cash is confirmed.`)}${bigCode}<div id="live-note"></div><div class="status-actions">${homeBtn}<button class="button button-danger" id="cancel-order" type="button">Cancel this order</button></div>`;
+  else if (st === 'print_queued') body = `${head('printer', 'Payment confirmed', 'Your file is in the shop\'s print queue.')}${summary}<div id="live-note"></div><div class="status-actions">${homeBtn}</div>`;
+  else if (st === 'printing') body = `${head('printer', 'Printing now', 'Your document is being printed. It will be ready at the counter shortly.')}${summary}<div id="live-note"></div><div class="status-actions">${homeBtn}</div>`;
+  else if (st === 'failed') body = `${head('info', 'There was a problem printing', `The shop has been told. Show the order code to ${esc(s.name)}${order.shopPhone ? ` or call ${esc(order.shopPhone)}` : ''} and they will retry it.`)}${bigCode}<div id="live-note"></div><div class="status-actions">${homeBtn}</div>`;
+  else body = `${head('wait', 'Order received', 'The shop is processing your order.')}${summary}<div id="live-note"></div><div class="status-actions">${homeBtn}</div>`;
+  app.innerHTML = `<div class="status-page"><section class="card status-card"><div id="net-banner" class="inline-notice warn hidden" role="status">Connection lost. Retrying...</div>${body}</section>${creditLine()}</div>`;
   window.scrollTo({ top: 0, behavior: 'instant' });
   document.querySelector('#back-home')?.addEventListener('click', goHome);
   document.querySelector('#cancel-order')?.addEventListener('click', () => customerOrderAction('cancel', 'Cancel this order?'));
@@ -695,26 +716,25 @@ function upiLaunchPlan(order) {
 function upiScreen(order, head) {
   const u = order.upi, s = C.shop;
   const homeBtn = `<button class="button button-light" id="back-home" type="button">Back to home</button>`;
-  if (!u) return `${head('info', 'UPI link not available', 'Switch to cash or cancel this order.')}<div class="cluster mt-5"><button class="button" id="switch-cash" type="button">Pay cash instead</button>${homeBtn}</div>`;
+  if (!u) return `${head('info', 'UPI link not available', 'Switch to cash or cancel this order.')}<div class="status-actions"><button class="button" id="switch-cash" type="button">Pay cash instead</button>${homeBtn}</div>`;
   const plan = upiLaunchPlan(order), phone = plan.mode !== 'qr';
   const copy = (v, label) => `<div class="copy-row"><span class="mono">${esc(v)}</span><button class="button button-light button-small" type="button" data-copy="${esc(v)}" aria-label="Copy ${label}">Copy</button></div>`;
   const failed = Boolean(C.upiNotice);
   const apps = plan.apps.length ? `<div class="upi-apps" role="group" aria-label="Open a specific UPI app"><span class="upi-apps-label">${failed ? 'Open a specific app' : 'Or open a specific app'}</span><div class="upi-apps-row">${plan.apps.map((a) => `<button class="button button-light" type="button" data-upi-app="${esc(a.id)}">${esc(a.name)}</button>`).join('')}</div>${failed && plan.plainUrl ? '<button class="text-button" type="button" data-upi-plain>Try the plain UPI link</button>' : ''}${failed && plan.chromeUrl ? '<button class="button button-light" type="button" data-open-chrome>Open this page in Chrome</button>' : ''}</div>` : '';
   const inApp = plan.inApp ? `<div class="inline-notice warn" id="upi-inapp" role="status">This in-app browser may block UPI apps. If the button does nothing, open this page in ${plan.platform === 'ios' ? 'Safari' : 'Chrome'}. ${plan.chromeUrl ? '<button class="text-button" type="button" data-open-chrome>Open in Chrome</button> · ' : ''}<button class="text-button" type="button" data-copy="${esc(location.href)}">Copy page link</button></div>` : '';
   return `${head('pay', `Pay ${money(order.amount)} to ${u.payee}`, phone ? 'Opens a UPI app on your phone. Amount and shop are filled in.' : 'Scan this QR with a UPI app on your phone. Amount and shop are filled in.')}
-  <div class="stack mt-5">
+  <div class="stack">
   ${inApp}
-  ${phone ? `<a class="button button-primary button-lg button-block" id="upi-open" href="${esc(u.uri)}">Open UPI app to pay ${money(order.amount)}</a>${apps}` : `<img class="upi-qr" src="${u.qr}" alt="UPI payment QR code for ${money(order.amount)}"><a class="button button-light button-block" id="upi-open" href="${esc(u.uri)}">Try opening a UPI app on this device</a>`}
+  ${phone ? `<a class="button button-primary button-lg button-block" id="upi-open" href="${esc(u.uri)}">Open UPI app to pay ${money(order.amount)}</a>${apps}` : `<div class="qr-wrap"><img class="upi-qr" src="${u.qr}" alt="UPI payment QR code for ${money(order.amount)}"></div><a class="button button-light button-block" id="upi-open" href="${esc(u.uri)}">Try opening a UPI app on this device</a>`}
   <div class="inline-notice warn ${C.upiNotice ? '' : 'hidden'}" id="upi-hint" role="status">${esc(upiHintText(C.upiNotice))}</div>${failed ? upiDetails(plan) : ''}
-  <details class="fold" id="upi-manual" ${phone && !C.upiNotice ? '' : 'open'}><summary>${icon('pay', 18)}<span>Pay manually or scan QR</span></summary><dl class="kv" style="margin:var(--s-3) 0 0"><dt>Pay to</dt><dd>${copy(u.id, 'UPI ID')}</dd><dt>Amount</dt><dd>${copy(Number(order.amount).toFixed(2), 'amount')}</dd><dt>Note</dt><dd>${copy(order.code, 'order code')}</dd></dl>${phone ? `<img class="upi-qr" src="${u.qr}" alt="UPI payment QR code">` : ''}</details>
-  <div class="inset-card stack-sm" id="paid-box"><h3>After you pay</h3><p class="subtext">Come back here and tell the shop.</p>
+  <details class="fold" id="upi-manual" ${phone && !C.upiNotice ? '' : 'open'}><summary>${icon('pay', 18)}<span>Pay manually or scan QR</span>${icon('chevron-down', 16)}</summary><dl class="kv fold-body"><dt>Pay to</dt><dd>${copy(u.id, 'UPI ID')}</dd><dt>Amount</dt><dd>${copy(Number(order.amount).toFixed(2), 'amount')}</dd><dt>Note</dt><dd>${copy(order.code, 'order code')}</dd></dl>${phone ? `<div class="qr-wrap"><img class="upi-qr" src="${u.qr}" alt="UPI payment QR code"></div>` : ''}</details>
+  <div class="paid-box" id="paid-box"><h3>After you pay</h3><p class="subtext">Come back here and tell the shop.</p>
     <div class="field"><label for="utr">UPI transaction ID (optional)</label><input id="utr" inputmode="text" autocomplete="off" maxlength="30" placeholder="Example: 412345678901"></div>
     <div class="form-error" id="claim-error" role="alert"></div>
     <button class="button button-primary button-lg button-block" id="claim-paid" type="button">I have paid</button></div>
-  <div class="cluster"><button class="button button-light" id="switch-cash" type="button">Pay cash instead</button><button class="button button-danger" id="cancel-order" type="button">Cancel order</button>${homeBtn}</div>
+  <div class="status-actions"><button class="button button-light" id="switch-cash" type="button">Pay cash instead</button><button class="button button-danger" id="cancel-order" type="button">Cancel order</button>${homeBtn}</div>
   <div id="live-note"></div><div class="pay-note">Tap “I have paid” only after the money has left your account.</div></div>`;
 }
-// Single seam for leaving the page towards an external app. Kept separate so it can be replaced in tests.
 function openExternal(url) { window.location.href = url; }
 function showUpiHint(kind) {
   C.upiNotice = kind; C.upiOpened = false; clearTimeout(timers.hint);

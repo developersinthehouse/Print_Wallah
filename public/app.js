@@ -16,12 +16,11 @@ let statusTimer = null;
 let adminTimer = null;
 let adminOrdersSignature = '';
 let adminRefreshBusy = false;
-function setShellMode(on) { document.body.classList.toggle('is-admin', Boolean(on)); }
 
 /* Load only the code this page needs: admin pages never download pdf.js or the customer flow, and vice versa. */
 const loadScript = src => new Promise((resolve, reject) => { const el = document.createElement('script'); el.src = src; el.onload = resolve; el.onerror = () => reject(new Error(`Could not load ${src}`)); document.head.appendChild(el); });
 const loadStyle = href => new Promise((resolve, reject) => { const el = document.createElement('link'); el.rel = 'stylesheet'; el.href = href; el.onload = resolve; el.onerror = () => reject(new Error(`Could not load ${href}`)); document.head.appendChild(el); });
-const modulesReady = (location.pathname.startsWith('/shop/') ? ['/vendor/pdfjs/pdf.min.js', '/photoedit.js', '/upiLaunch.js', '/customer.js'] : ['/admin.js']).reduce((chain, src) => chain.then(() => loadScript(src)), location.pathname.startsWith('/shop/') ? Promise.resolve() : loadStyle('/admin.css'));
+const modulesReady = (isCustomerRoute ? ['/vendor/pdfjs/pdf.min.js', '/photoedit.js', '/upiLaunch.js', '/customer.js'] : ['/admin.js']).reduce((chain, src) => chain.then(() => loadScript(src)), loadStyle(isCustomerRoute ? '/customer.css' : '/admin.css'));
 
 document.addEventListener('click', e => { if (e.target.closest('[data-close-modal]')) closeModal(); if (e.target.closest('[data-reload]')) location.reload(); });
 
@@ -34,17 +33,37 @@ async function api(url, options = {}) {
   return data;
 }
 const jsonBody = (value) => ({ method: 'POST', body: JSON.stringify(value) });
-function toast(message, tone) { const el = document.querySelector('#toast'); const kind = tone || (/failed|error|could not|invalid|not found|no connection/i.test(message) ? 'error' : /saved|verified|updated|copied|switched|confirmed|cancelled/i.test(message) ? 'success' : 'info'); el.textContent = message; el.dataset.tone = kind; el.classList.add('show'); clearTimeout(el._timer); el._timer = setTimeout(() => el.classList.remove('show'), 3200); }
+function popOpen(el) { try { return el.matches(':popover-open'); } catch { return false; } }
+function toast(message, tone) {
+  const el = document.querySelector('#toast');
+  const kind = tone || (/failed|error|could not|invalid|not found|no connection/i.test(message) ? 'error' : /saved|verified|updated|copied|switched|confirmed|cancelled/i.test(message) ? 'success' : 'info');
+  el.textContent = message; el.dataset.tone = kind;
+  clearTimeout(el._timer); clearTimeout(el._hide);
+  if (el.showPopover && !popOpen(el)) { try { el.showPopover(); } catch { } }
+  requestAnimationFrame(() => el.classList.add('show'));
+  el._timer = setTimeout(() => { el.classList.remove('show'); el._hide = setTimeout(() => { try { el.hidePopover?.(); } catch { } }, 280); }, 3200);
+}
 async function holdLoadingState(started, minimum = 180) { const remaining = minimum - (performance.now() - started); if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining)); }
 function esc(value = '') { return String(value).replace(/[&<>"']/g, s => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s])); }
 function money(value) { return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(Number(value || 0)); }
 function date(value) { return value ? new Date(value).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; }
 function dateTime(value) { return value ? new Date(value).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'; }
-function statePill(value) { const state = String(value || 'pending').toLowerCase(); return `<span class="pill ${esc(state)}">${esc(state.replaceAll('_', ' '))}</span>`; }
+const cap = value => { const t = String(value ?? ''); return t.charAt(0).toUpperCase() + t.slice(1); };
+function statePill(value) { const state = String(value || 'pending').toLowerCase(); return `<span class="pill ${esc(state)}">${esc(cap(state.replaceAll('_', ' ')))}</span>`; }
 function setHeading(value, chips = '') { document.querySelector('#nav-context').innerHTML = value ? `<span class="nav-role">${esc(value)}</span>${chips}` : chips; }
 function setBrandHome(href) { document.querySelector('#brand-link').setAttribute('href', href); }
-function showModal(content) { modalContent.innerHTML = `<div class="modal-inner">${content}</div>`; modal.showModal(); }
-function closeModal() { modal.close(); }
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+/* Animate a dialog out, then close it. A stale timer is always cancelled when the dialog is re-opened. */
+function closeWithMotion(dialog) {
+  if (!dialog.open) return;
+  clearTimeout(dialog._closeTimer);
+  if (reducedMotion.matches) { dialog.close(); return; }
+  dialog.dataset.closing = '1';
+  dialog._closeTimer = setTimeout(() => { delete dialog.dataset.closing; dialog.close(); }, 190);
+}
+function reopenReset(dialog) { clearTimeout(dialog._closeTimer); delete dialog.dataset.closing; }
+function showModal(content) { reopenReset(modal); modalContent.innerHTML = `<div class="modal-inner">${content}</div>`; if (!modal.open) modal.showModal(); }
+function closeModal() { closeWithMotion(modal); }
 
 /* Shared footer bottom: copyright + developer credit + social links (used by the customer footer and the sign-in pages). */
 const SOCIAL = [
@@ -64,9 +83,10 @@ function legalFooterHtml() {
 function confirmDialog({ title, message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel', tone = 'primary', field = null }) {
   return new Promise(resolve => {
     const d = document.querySelector('#confirm');
+    reopenReset(d); if (d.open) d.close();
     d.innerHTML = `<form class="confirm-body" method="dialog"><h2 id="confirm-title">${esc(title)}</h2>${message ? `<p>${esc(message)}</p>` : ''}${field ? `<div class="field"><label for="confirm-field">${esc(field.label)}</label><input id="confirm-field" type="${field.type || 'text'}" ${field.attrs || ''} value="${esc(field.value ?? '')}" required></div><div class="form-error" id="confirm-error" role="alert"></div>` : ''}<div class="confirm-actions"><button type="button" class="button button-light" data-v="0">${esc(cancelLabel)}</button><button type="submit" class="button button-${tone}" data-v="1">${esc(confirmLabel)}</button></div></form>`;
     let settled = false;
-    const done = value => { if (settled) return; settled = true; d.close(); resolve(value); };
+    const done = value => { if (settled) return; settled = true; closeWithMotion(d); resolve(value); };
     d.querySelector('[data-v="0"]').onclick = () => done(false);
     d.querySelector('form').onsubmit = e => { e.preventDefault(); if (field) { const input = d.querySelector('#confirm-field'); if (!input.checkValidity()) { d.querySelector('#confirm-error').textContent = input.validationMessage || 'Enter a valid value.'; return; } done(input.value); } else done(true); };
     d.oncancel = e => { e.preventDefault(); done(false); };
@@ -75,47 +95,58 @@ function confirmDialog({ title, message = '', confirmLabel = 'Confirm', cancelLa
     (field ? d.querySelector('#confirm-field') : d.querySelector('[data-v="0"]')).focus();
   });
 }
+function setView(name) { document.body.dataset.view = name; document.body.classList.toggle('is-admin', name === 'admin'); }
+function setShellMode(on) { setView(on ? 'admin' : 'plain'); }
 function showDrawer(content) { modal.classList.add('is-drawer'); showModal(content); }
 modal.addEventListener('close', () => modal.classList.remove('is-drawer'));
 modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
 
 async function start() {
+  document.body.dataset.view = isCustomerRoute ? 'customer' : 'boot';
   document.querySelector('#site-footer').innerHTML = legalFooterHtml();
-  const navWrap = document.querySelector('.nav-wrap'), syncNav = () => navWrap.classList.toggle('scrolled', window.scrollY > 6);
-  window.addEventListener('scroll', syncNav, { passive: true }); syncNav();
+  const topbar = document.querySelector('#topbar'), syncBar = () => topbar.classList.toggle('scrolled', window.scrollY > 6);
+  window.addEventListener('scroll', syncBar, { passive: true }); syncBar();
   try { const meta = await api('/meta'); window.MAX_UPLOAD_MB = meta.maxUploadMb; } catch { }
   try { const data = await api('/session'); session = data.user; }
   catch { session = null; }
   try { await modulesReady; } catch (e) { app.innerHTML = errorPanel('Could not load this page', 'Check your connection and try again.'); return; }
   setBrandHome(isCustomerRoute ? `/shop/${encodeURIComponent(route)}` : isShopAdminRoute ? '/admin' : '/');
-  if (isCustomerRoute) { document.querySelector('#site-footer').classList.add('hidden'); document.querySelector('#app').classList.add('wide'); setHeading(''); await renderCustomer(route); return; }
-  if (isShopAdminRoute) {
-    if (session?.role === 'shop_admin') { logoutButton.classList.remove('hidden'); await renderShopAdmin(); }
-    else if (session?.role === 'super_admin') { logoutButton.classList.remove('hidden'); await renderSuper(); }
-    else renderLogin('shop');
-    return;
-  }
+  if (isCustomerRoute) { setHeading(''); await renderCustomer(route); return; }
+  if (isShopAdminRoute) { if (session?.role === 'shop_admin') { logoutButton.classList.remove('hidden'); await renderShopAdmin(); } else { renderLogin('shop'); } return; }
   if (session?.role === 'super_admin') { logoutButton.classList.remove('hidden'); await renderSuper(); return; }
   if (session?.role === 'shop_admin') { logoutButton.classList.remove('hidden'); await renderShopAdmin(); return; }
   renderLogin('super');
 }
 logoutButton.addEventListener('click', async () => { await api('/auth/logout', { method: 'POST' }).catch(() => { }); session = null; logoutButton.classList.add('hidden'); location.href = '/'; });
 function renderLogin(mode) {
-  const superMode = mode === 'super'; setHeading(''); setShellMode(false);
-  app.innerHTML = `<section class="login-wrap"><div class="login-card">
-    <div class="login-brandline">
-      <div class="login-brand-mark" aria-hidden="true"><svg viewBox="0 0 48 48" fill="none"><path class="login-mark-paper" d="M15 7h15l6 6v7H15z"/><path d="M30 7v7h6M12 20h24a4 4 0 0 1 4 4v9a4 4 0 0 1-4 4h-3v-8H15v8h-3a4 4 0 0 1-4-4v-9a4 4 0 0 1 4-4Z"/><path d="M15 29h18v12H15zM19 33h10m-10 4h7"/><circle cx="34" cy="25" r="1" fill="currentColor" stroke="none"/></svg></div>
-      <div class="login-brand-copy"><span class="login-brand-name">PRINT WALLAH</span><span class="login-brand-caption">WORKSPACE ACCESS</span></div>
+  const superMode = mode === 'super'; setHeading(''); setView('login');
+  document.querySelector('#topbar-title').textContent = '';
+  app.innerHTML = `<section class="auth">
+    <aside class="auth-aside">
+      <img class="wordmark" src="/assets/pw-wordmark-480.png" width="168" height="24" alt="Print Wallah">
+      <div class="auth-art" aria-hidden="true"><svg viewBox="0 0 372 292" xmlns="http://www.w3.org/2000/svg" focusable="false"><defs><radialGradient id="auth-sh" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#000" stop-opacity=".55"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient><linearGradient id="auth-face" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#202632"/><stop offset="1" stop-color="#151a22"/></linearGradient></defs><ellipse cx="170" cy="236" rx="160" ry="34" fill="url(#auth-sh)"/><g class="sh sh3"><polygon class="edge" points="36.1,191.5 166.0,266.5 166.0,272.5 36.1,197.5"/><polygon class="edge" points="166.0,266.5 334.9,169.0 334.9,175.0 166.0,272.5"/><polygon class="face" points="205.0,94.0 334.9,169.0 166.0,266.5 36.1,191.5"/></g><g class="sh sh2"><polygon class="edge" points="36.1,161.5 166.0,236.5 166.0,242.5 36.1,167.5"/><polygon class="edge" points="166.0,236.5 334.9,139.0 334.9,145.0 166.0,242.5"/><polygon class="face" points="205.0,64.0 334.9,139.0 166.0,236.5 36.1,161.5"/></g><g class="sh sh1"><polygon class="edge" points="36.1,131.5 166.0,206.5 166.0,212.5 36.1,137.5"/><polygon class="edge" points="166.0,206.5 334.9,109.0 334.9,115.0 166.0,212.5"/><polygon class="face" points="205.0,34.0 334.9,109.0 166.0,206.5 36.1,131.5"/><line class="row" x1="201.5" y1="62.0" x2="286.4" y2="111.0"/><line class="row" x1="185.9" y1="71.0" x2="260.4" y2="114.0"/><line class="row" x1="170.4" y1="80.0" x2="255.2" y2="129.0"/><line class="row" x1="154.8" y1="89.0" x2="215.4" y2="124.0"/><line class="row" x1="139.2" y1="98.0" x2="218.9" y2="144.0"/><line class="accent" x1="95.9" y1="123.0" x2="149.6" y2="154.0"/></g></svg></div>
+      <div class="auth-copy">
+        <p class="eyebrow">Workspace console</p>
+        <h2>Every counter, one queue.</h2>
+        <p>Shops, orders and the print queue, managed from one place.</p>
+        <ul class="auth-points"><li>${icon('shops', 18)}Shops, access and pricing</li><li>${icon('orders', 18)}Orders and payment checks</li><li>${icon('printer', 18)}Live print queue</li></ul>
+      </div>
+    </aside>
+    <div class="auth-main">
+      <div class="auth-card">
+        <div class="auth-brand-m"><img src="/assets/pw-mark-96.png" width="34" height="34" alt=""><img src="/assets/pw-wordmark-320.png" width="132" height="19" alt="Print Wallah"></div>
+        <div class="auth-intro"><h1>${superMode ? 'Super Admin sign in' : 'Shop admin sign in'}</h1><p class="lede">${superMode ? 'Manage shops, access, pricing and the print network from one place.' : 'Sign in with the credentials created for your printing shop.'}</p></div>
+        <form id="login-form" class="auth-form">
+          <div class="field"><label for="email">Email address</label><div class="input-icon">${icon('mail', 18)}<input id="email" name="email" type="email" autocomplete="username" placeholder="${superMode ? 'admin@printwallah.com' : 'shop@printwallah.com'}" required></div></div>
+          <div class="field"><label for="password">Password</label><div class="input-icon has-action">${icon('lock', 18)}<input id="password" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required><button class="input-action login-password-toggle" type="button" aria-label="Show password" aria-pressed="false">${icon('eye', 18)}</button></div></div>
+          <div class="form-error" id="login-error" role="alert"></div>
+          <button class="button button-primary button-lg auth-submit" type="submit"><span>${superMode ? 'Enter platform' : 'Open shop dashboard'}</span>${icon('arrow-right', 18)}</button>
+        </form>
+        <p class="auth-switch">${superMode ? 'Running a shop?' : 'Platform owner?'} <a class="text-button" id="switch-login" href="${superMode ? '/admin' : '/'}">${superMode ? 'Shop admin sign in' : 'Super Admin sign in'}</a></p>
+      </div>
+      ${legalFooterHtml()}
     </div>
-    <div class="login-intro"><h1>${superMode ? 'Super Admin sign in' : 'Shop admin sign in'}</h1><p class="lede">${superMode ? 'Manage shops, access, pricing and the print network from one place.' : 'Sign in with the credentials created for your printing shop.'}</p></div>
-    <form id="login-form" class="stack">
-      <div class="field"><label for="email">Email address</label><div class="login-input"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="3"/><path d="m4 6 6 4.5L16 6"/></svg><input id="email" name="email" type="email" autocomplete="username" required></div></div>
-      <div class="field"><label for="password">Password</label><div class="login-input"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="3" y="8" width="14" height="10" rx="2.5"/><path d="M6 8V6a4 4 0 0 1 8 0v2m-4 4v2"/></svg><input id="password" name="password" type="password" autocomplete="current-password" required><button class="login-password-toggle" type="button" aria-label="Show password" aria-pressed="false"><svg class="login-eye-open" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M2 10s2.8-5 8-5 8 5 8 5-2.8 5-8 5-8-5-8-5Z"/><circle cx="10" cy="10" r="2.2"/></svg><svg class="login-eye-closed" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m3 3 14 14M8.6 5.2A8 8 0 0 1 10 5c5.2 0 8 5 8 5a12 12 0 0 1-2.3 2.8M5.1 5.8C3.1 7.2 2 10 2 10s2.8 5 8 5c.8 0 1.6-.1 2.3-.4"/><path d="M8.6 8.6a2 2 0 0 0 2.8 2.8"/></svg></button></div></div>
-      <div class="form-error" id="login-error" role="alert"></div>
-      <button class="button button-primary button-lg login-submit" type="submit"><span>${superMode ? 'Enter platform' : 'Open shop dashboard'}</span><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 10h11m-4-4 4 4-4 4"/></svg></button>
-    </form>
-    <p class="login-switch">${superMode ? 'Running a shop?' : 'Platform owner?'} <a class="text-button" id="switch-login" href="${superMode ? '/admin' : '/'}">${superMode ? 'Shop admin sign in' : 'Super Admin sign in'}</a></p>
-  </div></section>`;
+  </section>`;
   const loginForm = document.querySelector('#login-form');
   const password = loginForm.querySelector('#password');
   const passwordToggle = loginForm.querySelector('.login-password-toggle');
@@ -124,17 +155,12 @@ function renderLogin(mode) {
     password.type = showing ? 'text' : 'password';
     passwordToggle.setAttribute('aria-pressed', String(showing));
     passwordToggle.setAttribute('aria-label', showing ? 'Hide password' : 'Show password');
+    passwordToggle.innerHTML = icon(showing ? 'eye-off' : 'eye', 18);
   });
-  loginForm.onsubmit = async e => { e.preventDefault(); const data = Object.fromEntries(new FormData(e.currentTarget)); const button = e.currentTarget.querySelector('[type="submit"]'); const label = button.innerHTML; button.disabled = true; button.innerHTML = '<span class="spinner" aria-hidden="true"></span> Signing in'; try { const res = await api(superMode ? '/auth/super/login' : '/auth/shop/login', jsonBody(data)); session = res.user; logoutButton.classList.remove('hidden'); button.innerHTML = '<span class="spinner" aria-hidden="true"></span> Opening workspace'; if (session.role === 'super_admin') renderSuper(); else renderShopAdmin(); } catch (err) { document.querySelector('#login-error').textContent = err.message; button.innerHTML = label; button.disabled = false; } };
+  loginForm.onsubmit = async e => { e.preventDefault(); const data = Object.fromEntries(new FormData(e.currentTarget)); const button = e.currentTarget.querySelector('[type="submit"]'); const label = button.innerHTML; button.disabled = true; button.innerHTML = '<span class="spinner" aria-hidden="true"></span><span>Signing in</span>'; try { const res = await api(superMode ? '/auth/super/login' : '/auth/shop/login', jsonBody(data)); session = res.user; logoutButton.classList.remove('hidden'); button.innerHTML = '<span class="spinner" aria-hidden="true"></span><span>Opening workspace</span>'; if (session.role === 'super_admin') renderSuper(); else renderShopAdmin(); } catch (err) { document.querySelector('#login-error').textContent = err.message; button.innerHTML = label; button.disabled = false; } };
 }
 
-
-
-
-
-
-
 async function copyText(value) { try { await navigator.clipboard.writeText(value); toast('Copied to clipboard.'); } catch { toast(value); } }
-function errorPanel(title, message) { return `<section class="login-wrap"><div class="login-card"><h1>${esc(title)}</h1><p class="lede">${esc(message)}</p><button class="button button-light" type="button" data-reload>Try again</button></div></section>`; }
+function errorPanel(title, message) { return `<section class="state-screen"><div class="state-card">${icon('empty', 40)}<h1>${esc(title)}</h1><p class="lede">${esc(message)}</p><button class="button" type="button" data-reload>Try again</button></div></section>`; }
 
 start();

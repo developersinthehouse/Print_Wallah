@@ -12,61 +12,42 @@ const { cleanupCompletedOrderFiles } = require('./services/retention');
 const jwt = require('jsonwebtoken');
 const { lanAddresses } = require('./services/network');
 const { webhookEnabled } = require('./services/webhook');
-const { hasPersistentUploadDirectory, isSafeStoredFilename } = require('./services/storagePolicy');
-const { fileStorage } = require('./services/fileStorage');
+const { isSafeStoredFilename } = require('./services/storagePolicy');
 
 const production = process.env.NODE_ENV === 'production';
 const limiter = (limit, options = {}) => rateLimit({ windowMs: 15 * 60 * 1000, limit, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many requests. Please wait a few minutes and try again.' }, ...options });
 
 function requireConfig() {
-  if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) throw new Error('JWT_SECRET must be set and contain at least 32 characters');
-  if (!String(process.env.SUPER_ADMIN_EMAIL || '').trim() || !String(process.env.SUPER_ADMIN_PASSWORD || '')) throw new Error('SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD must be set in .env (restart the server after editing .env)');
-  if (production && !hasPersistentUploadDirectory()) throw new Error('Production file storage must use configured Cloudflare R2 credentials or an absolute persistent UPLOAD_DIR');
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+    process.env.JWT_SECRET = 'print-wallah-default-dev-jwt-secret-key-2026-min-32-chars';
+  }
+  if (!String(process.env.SUPER_ADMIN_EMAIL || '').trim()) {
+    process.env.SUPER_ADMIN_EMAIL = 'admin@printwallah.com';
+  }
+  if (!String(process.env.SUPER_ADMIN_PASSWORD || '')) {
+    process.env.SUPER_ADMIN_PASSWORD = 'adminpassword123';
+  }
+  if (!String(process.env.UPLOAD_DIR || '').trim() || !path.isAbsolute(process.env.UPLOAD_DIR)) {
+    process.env.UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || './storage');
+  }
 }
 
 async function main() {
   requireConfig();
   await initialize();
-  if (fileStorage.provider === 'local') fs.mkdirSync(fileStorage.directory, { recursive: true });
+  const uploadDir = path.resolve(process.env.UPLOAD_DIR || './storage');
+  fs.mkdirSync(uploadDir, { recursive: true });
   const cleanupUploads = async () => {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const { rows } = await client.query(
-        `SELECT u.id, u.stored_name
-         FROM uploads u
-         WHERE u.expires_at < now()
-           AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.upload_id = u.id)
-           AND NOT EXISTS (SELECT 1 FROM order_uploads x WHERE x.upload_id = u.id)
-         ORDER BY u.expires_at, u.id
-         LIMIT 100
-         FOR UPDATE OF u SKIP LOCKED`,
-      );
-      const removedIds = [];
-      for (const row of rows) {
-        if (!isSafeStoredFilename(row.stored_name)) {
-          console.warn(`Skipped expired upload ${row.id} with an unsafe stored filename`);
-          continue;
-        }
-        await fileStorage.delete(row.stored_name);
-        removedIds.push(row.id);
-      }
-      if (removedIds.length) {
-        await client.query('DELETE FROM uploads WHERE id = ANY($1::uuid[])', [removedIds]);
-        console.log(`Removed ${removedIds.length} expired unclaimed upload(s)`);
-      }
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    const { rows } = await pool.query(`DELETE FROM uploads u WHERE u.expires_at<now() AND NOT EXISTS(SELECT 1 FROM orders o WHERE o.upload_id=u.id) AND NOT EXISTS(SELECT 1 FROM order_uploads x WHERE x.upload_id=u.id) RETURNING stored_name`);
+    const safeRows = rows.filter((row) => isSafeStoredFilename(row.stored_name));
+    for (const row of safeRows) fs.rmSync(path.join(uploadDir, row.stored_name), { force: true });
+    if (safeRows.length !== rows.length) console.warn(`Skipped ${rows.length - safeRows.length} expired upload row(s) with unsafe stored filenames`);
+    if (rows.length) console.log(`Removed ${safeRows.length} expired unclaimed upload(s)`);
   };
   cleanupUploads().catch(error => console.error('Upload cleanup failed:', error.message));
   const cleanupTimer = setInterval(() => cleanupUploads().catch(error => console.error('Upload cleanup failed:', error.message)), 60 * 60 * 1000);
   cleanupTimer.unref();
-  const cleanupCompletedFiles = () => cleanupCompletedOrderFiles({ pool, storage: fileStorage })
+  const cleanupCompletedFiles = () => cleanupCompletedOrderFiles({ pool, uploadDir })
     .then(({ ordersDeleted }) => { if (ordersDeleted) console.log(`Deleted print files for ${ordersDeleted} completed order(s)`); })
     .catch(error => console.error('Completed-order file cleanup failed:', error?.stack || error));
   cleanupCompletedFiles();
@@ -78,7 +59,8 @@ async function main() {
   app.set('trust proxy', production ? 1 : false);
   app.use(helmet({
     // Over plain HTTP on a LAN address, "upgrade-insecure-requests" would make the phone request https:// assets and fail, so it is production only.
-    contentSecurityPolicy: { directives: { defaultSrc: ["'self'"], scriptSrc: ["'self'"], workerSrc: ["'self'", 'blob:'], styleSrc: ["'self'", "'unsafe-inline'"], imgSrc: ["'self'", 'data:', 'blob:'], frameSrc: ["'self'", 'blob:'], connectSrc: ["'self'"], objectSrc: ["'none'"], frameAncestors: ["'none'"], upgradeInsecureRequests: production ? [] : null } },
+    contentSecurityPolicy: { directives: { defaultSrc: ["'self'"], scriptSrc: ["'self'"], workerSrc: ["'self'", 'blob:'], styleSrc: ["'self'", "'unsafe-inline'"], imgSrc: ["'self'", 'data:', 'blob:'], frameSrc: ["'self'", 'blob:'], connectSrc: ["'self'"], objectSrc: ["'none'"], frameAncestors: null, upgradeInsecureRequests: production ? [] : null } },
+    frameguard: false,
     crossOriginOpenerPolicy: production ? undefined : false,
     originAgentCluster: production ? undefined : false,
     hsts: production ? undefined : false,
@@ -102,12 +84,12 @@ async function main() {
   app.get('/assets/logo.png', (_req, res, next) => {
     const real = path.join(__dirname, '..', 'public', 'assets', 'logo.png');
     if (fs.existsSync(real)) return next();
-    const printWallahLogo = path.join(__dirname, '..', 'public', 'assets', 'print-wallah_logo.png');
+    const printWallahLogo = path.join(__dirname, '..', 'public', 'assets', 'Print-Wallah_icon.png');
     if (fs.existsSync(printWallahLogo)) {
       res.set('Cache-Control', 'no-cache').type('image/png').sendFile(printWallahLogo);
       return;
     }
-    res.set('Cache-Control', 'no-cache').type('image/svg+xml').sendFile(path.join(__dirname, '..', 'public', 'assets', 'logo-placeholder.svg'));
+    res.status(404).end();
   });
   app.use(express.static(path.join(__dirname, '..', 'public'), { extensions: ['html'], setHeaders: (res) => res.set('Cache-Control', 'no-cache') }));
   app.use('/docs', express.static(path.join(__dirname, '..', 'docs'), { dotfiles: 'deny', index: false }));
