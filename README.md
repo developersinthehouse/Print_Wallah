@@ -67,7 +67,7 @@ The server also initializes the schema on startup, so `npm run db:init` is safe 
 
 ## Deployment
 
-See [Render deployment](docs/DEPLOYMENT.md). Create a PostgreSQL database and a Node web service. Configure `DATABASE_URL`, `DATABASE_SSL`, `APP_URL`, `JWT_SECRET`, `SUPER_ADMIN_EMAIL`, and `SUPER_ADMIN_PASSWORD` as Render environment variables. Set build command to `npm install` and start command to `npm start`.
+See [Supabase setup](docs/SUPABASE.md) for the recommended PostgreSQL database, or [Render deployment](docs/DEPLOYMENT.md) for the existing Render PostgreSQL setup. Configure `DATABASE_URL`, `DATABASE_SSL`, `APP_URL`, `JWT_SECRET`, `SUPER_ADMIN_EMAIL`, and `SUPER_ADMIN_PASSWORD` as private environment variables. Set build command to `npm install` and start command to `npm start`.
 
 Uploaded documents are kept in `UPLOAD_DIR`. The app does not expose that directory as static content. The default local directory is `./storage`; production must mount persistent storage at the chosen absolute path and set `UPLOAD_DIR` to it. Production uploads return 503 if this is not configured. Render's ephemeral filesystem is not suitable for customer files across deploys/restarts.
 
