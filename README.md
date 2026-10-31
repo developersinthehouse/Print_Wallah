@@ -9,7 +9,7 @@ Print Wallah is a multi-shop printing platform with a vanilla HTML/CSS/JavaScrip
 - Shop dashboards, analytics, settings, payment review, and print-job controls.
 - Atomic per-shop print-job leasing for the optional Python agent.
 - Multi-file document bundling and photo print layout generation.
-- Automatic deletion of uploaded and generated print files about 10 minutes after successful printing; order, payment, and audit metadata remains.
+- Automatic deletion of uploaded and generated print files immediately after successful printing; order, payment, and audit metadata remains.
 
 ## Setup
 

@@ -17,6 +17,7 @@ const { webhookEnabled, verifySignature } = require('../services/webhook');
 const { baseUrl } = require('../services/network');
 const { parseAnalyticsRange, queryPlatformAnalytics, queryShopAnalytics } = require('../services/reports');
 const { isSafeStoredFilename } = require('../services/storagePolicy');
+const { cleanupCompletedOrderFiles } = require('../services/retention');
 
 const router = express.Router();
 const MAX_DOCUMENT_BUNDLE_FILES = 10;
@@ -882,6 +883,12 @@ router.post('/agent/:shopId/jobs/:jobId/result', asyncRoute(async (req, res) => 
     return true;
   });
   if (!result) return res.status(409).json({ error: 'Job lease is no longer active' });
+  if (status === 'completed') {
+    // Printing is done; remove source and generated file bytes now. The periodic
+    // server cleanup retries if R2 is temporarily unavailable.
+    try { await cleanupCompletedOrderFiles({ db }); }
+    catch (error) { console.error('Immediate print-file cleanup failed:', error.message); }
+  }
   return res.json({ ok: true });
 }));
 
@@ -917,7 +924,7 @@ async function transitionOrder(req, res, action) {
         orderPatch = { print_status: 'not_ready', order_status: 'cancelled', payment_status: order.payment_status === 'pending' ? 'cancelled' : order.payment_status };
         if (paymentSnapshot.exists && paymentSnapshot.data().status === 'pending') paymentPatch = { status: 'cancelled' };
       } else if (action === 'print-failed') {
-        if (order.files_deleted_at) throw Object.assign(new Error('Print files were deleted after the 10-minute retention period and cannot be retried'), { status: 409 });
+        if (order.files_deleted_at) throw Object.assign(new Error('Print files were deleted after successful printing and cannot be retried'), { status: 409 });
         if (!['claimed', 'printing', 'failed', 'completed'].includes(order.print_status)) throw Object.assign(new Error('Only jobs that are printing, failed or completed can be marked failed'), { status: 409 });
         jobPatch = { status: 'failed', error_message: String(req.body.reason || 'Marked failed by shop admin').slice(0, 1000) };
         orderPatch = { order_status: 'failed', print_status: 'failed' };
@@ -938,6 +945,10 @@ async function transitionOrder(req, res, action) {
       return { ...order, ...orderPatch, updated_at: now };
     });
     if (!updated) return res.status(404).json({ error: 'Order not found' });
+    if (action === 'complete') {
+      try { await cleanupCompletedOrderFiles({ db }); }
+      catch (error) { console.error('Immediate print-file cleanup failed:', error.message); }
+    }
     return res.json({ order: updated });
   } catch (e) { if (e.status) return res.status(e.status).json({ error: e.message }); throw e; }
 }

@@ -2,7 +2,8 @@ const { COLLECTIONS, getDb } = require('../firestoreStore');
 const { fileStorage } = require('./fileStorage');
 const { isSafeStoredFilename } = require('./storagePolicy');
 
-const PRINT_FILE_RETENTION_MS = 10 * 60 * 1000;
+// Customer files are temporary: remove them as soon as printing is reported complete.
+const PRINT_FILE_RETENTION_MS = 0;
 const CLEANUP_BATCH_SIZE = 100;
 
 async function cleanupCompletedOrderFiles({ db = getDb(), storage = fileStorage, now = new Date() } = {}) {

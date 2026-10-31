@@ -67,13 +67,13 @@ test('completed order source and generated files are removed while order metadat
   });
 });
 
-test('completed order cleanup waits for ten minutes after completion', async () => {
-  const now = new Date('2026-10-02T12:09:59.000Z');
-  const order = { id: 'order-2', upload_id: 'upload-2', print_file_name: null, order_status: 'completed', completed_at: old(now, 9 + 59 / 60), files_deleted_at: null };
+test('completed order files are eligible for cleanup immediately', async () => {
+  const now = new Date('2026-10-02T12:00:00.000Z');
+  const order = { id: 'order-2', upload_id: 'upload-2', print_file_name: null, order_status: 'completed', completed_at: now.toISOString(), files_deleted_at: null };
   await withStorage(['source.pdf'], async (directory, storage) => {
     const db = makeDb(order, [{ id: 'upload-2', stored_name: 'source.pdf' }]);
-    assert.deepEqual(await cleanupCompletedOrderFiles({ db, storage, now }), { ordersDeleted: 0, filesDeleted: 0 });
-    assert.equal(await fs.readFile(path.join(directory, 'source.pdf'), 'utf8'), 'print test data');
+    assert.deepEqual(await cleanupCompletedOrderFiles({ db, storage, now }), { ordersDeleted: 1, filesDeleted: 1 });
+    await assert.rejects(fs.stat(path.join(directory, 'source.pdf')), { code: 'ENOENT' });
   });
 });
 

@@ -7,7 +7,7 @@
 5. Add the Firebase project ID, service-account JSON, R2 account ID/access key/secret/bucket name, `APP_URL`, `JWT_SECRET`, `SUPER_ADMIN_EMAIL`, and `SUPER_ADMIN_PASSWORD` in the web service's private environment settings. Use the same Firebase project and R2 bucket locally.
 6. Deploy and verify HTTPS. For a new installation, sign in as Super Admin and create the first shop. For an existing installation, verify the imported shops and orders against the migration checklist. Test the customer portal and print agent in staging before switching production traffic.
 
-Customer file bytes are deleted from the R2 bucket about 10 minutes after successful printing. Keep the existing bucket and its access restricted. Restrict service-account access and admin passwords. UPI remains manually verified; do not automate approvals until a provider adapter is configured.
+Customer file bytes are deleted from the R2 bucket immediately after the print agent reports a successful print. If R2 is temporarily unavailable, the server retries cleanup in its background sweep. Order, payment, and audit records remain in Firestore. Keep the existing bucket and its access restricted. Restrict service-account access and admin passwords. UPI remains manually verified; do not automate approvals until a provider adapter is configured.
 
 ## Render environment settings
 
