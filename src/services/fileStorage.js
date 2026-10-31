@@ -4,9 +4,7 @@ const { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } = re
 const { isSafeStoredFilename } = require('./storagePolicy');
 
 function isNotFound(error) {
-  return error?.name === 'NotFound' ||
-    error?.name === 'NoSuchKey' ||
-    error?.$metadata?.httpStatusCode === 404;
+  return error?.name === 'NotFound' || error?.name === 'NoSuchKey' || error?.$metadata?.httpStatusCode === 404;
 }
 
 function missingFileError(key) {
@@ -16,7 +14,7 @@ function missingFileError(key) {
 }
 
 function createFileStorage({ environment = process.env, client } = {}) {
-  const provider = environment.STORAGE_PROVIDER || 'local';
+  const provider = environment.STORAGE_PROVIDER || 'r2';
 
   if (provider === 'r2') {
     const { R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME } = environment;
@@ -35,7 +33,12 @@ function createFileStorage({ environment = process.env, client } = {}) {
     return {
       provider,
       async put(key, body, contentType) {
-        await s3.send(new PutObjectCommand({ Bucket: R2_BUCKET_NAME, Key: keyFor(key), Body: body, ContentType: contentType }));
+        await s3.send(new PutObjectCommand({
+          Bucket: R2_BUCKET_NAME,
+          Key: keyFor(key),
+          Body: body,
+          ContentType: contentType || 'application/octet-stream',
+        }));
       },
       async get(key) {
         try {
@@ -47,7 +50,11 @@ function createFileStorage({ environment = process.env, client } = {}) {
         }
       },
       async delete(key) {
-        await s3.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: keyFor(key) }));
+        try {
+          await s3.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: keyFor(key) }));
+        } catch (error) {
+          if (!isNotFound(error)) throw error;
+        }
       },
     };
   }
@@ -73,6 +80,14 @@ function createFileStorage({ environment = process.env, client } = {}) {
   };
 }
 
-const fileStorage = createFileStorage();
+// Resolve storage on first operation so server startup validates environment
+// before the R2 client is initialized. The server forces R2 for all app traffic.
+function activeStorage() { return createFileStorage({ environment: process.env }); }
+const fileStorage = {
+  get provider() { return process.env.STORAGE_PROVIDER || 'r2'; },
+  async put(...args) { return activeStorage().put(...args); },
+  async get(...args) { return activeStorage().get(...args); },
+  async delete(...args) { return activeStorage().delete(...args); },
+};
 
 module.exports = { createFileStorage, fileStorage };

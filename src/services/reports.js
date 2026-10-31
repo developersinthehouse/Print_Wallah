@@ -1,3 +1,5 @@
+const { COLLECTIONS, getDb } = require('../firestoreStore');
+
 const REPORT_TIME_ZONE = 'Asia/Kolkata';
 const MAX_REPORT_RANGE_DAYS = 3660;
 
@@ -23,79 +25,82 @@ function parseAnalyticsRange(query, now = new Date()) {
   const defaultFrom = dateInTimeZone(new Date(now.getTime() - 29 * 86400000));
   const from = query.from === undefined ? defaultFrom : query.from;
   const groupBy = query.groupBy === undefined ? 'day' : query.groupBy;
-
-  if (!validDateString(from) || !validDateString(to)) {
-    throw Object.assign(new Error('Dates must use YYYY-MM-DD format'), { status: 400 });
-  }
-  if (!['day', 'month'].includes(groupBy)) {
-    throw Object.assign(new Error('groupBy must be day or month'), { status: 400 });
-  }
+  if (!validDateString(from) || !validDateString(to)) throw Object.assign(new Error('Dates must use YYYY-MM-DD format'), { status: 400 });
+  if (!['day', 'month'].includes(groupBy)) throw Object.assign(new Error('groupBy must be day or month'), { status: 400 });
   const duration = (Date.parse(`${to}T00:00:00.000Z`) - Date.parse(`${from}T00:00:00.000Z`)) / 86400000;
-  if (duration < 0 || duration >= MAX_REPORT_RANGE_DAYS) {
-    throw Object.assign(new Error('Choose an end date on or after the start date within a 10-year range'), { status: 400 });
-  }
+  if (duration < 0 || duration >= MAX_REPORT_RANGE_DAYS) throw Object.assign(new Error('Choose an end date on or after the start date within a 10-year range'), { status: 400 });
   return { from, to, groupBy, timeZone: REPORT_TIME_ZONE };
 }
 
-function periodExpression(groupBy, createdAt = 'created_at') {
-  return groupBy === 'month'
-    ? `date_trunc('month', ${createdAt} AT TIME ZONE '${REPORT_TIME_ZONE}')::date`
-    : `(${createdAt} AT TIME ZONE '${REPORT_TIME_ZONE}')::date`;
+function istBoundary(date, days = 0) {
+  const utcDate = new Date(`${date}T00:00:00.000Z`);
+  utcDate.setUTCDate(utcDate.getUTCDate() + days);
+  return new Date(utcDate.getTime() - (5 * 60 + 30) * 60000);
 }
 
-const REPORT_METRICS = `
-  count(*)::int AS orders,
-  coalesce(sum((config->>'billablePages')::int), 0)::int AS pages,
-  coalesce(sum(amount) FILTER (WHERE payment_status = 'verified'), 0)::numeric(12,2) AS revenue,
-  coalesce(sum(amount) FILTER (WHERE payment_status = 'verified' AND payment_method = 'upi'), 0)::numeric(12,2) AS online,
-  coalesce(sum(amount) FILTER (WHERE payment_status = 'verified' AND payment_method = 'cash'), 0)::numeric(12,2) AS cash,
-  count(*) FILTER (WHERE payment_status = 'pending')::int AS payment_pending,
-  count(*) FILTER (WHERE print_status = 'failed')::int AS print_failures`;
-
-function istRangeSql(startParameter, endParameter, column = 'created_at') {
-  return `${column} >= ($${startParameter}::date::timestamp AT TIME ZONE '${REPORT_TIME_ZONE}')
-    AND ${column} < (($${endParameter}::date + INTERVAL '1 day')::timestamp AT TIME ZONE '${REPORT_TIME_ZONE}')`;
+function inRange(order, range) {
+  const createdAt = new Date(order.created_at).getTime();
+  return createdAt >= istBoundary(range.from).getTime() && createdAt < istBoundary(range.to, 1).getTime();
 }
 
-async function queryShopAnalytics(pool, shopId, range) {
-  const dateExpression = periodExpression(range.groupBy);
-  const { rows } = await pool.query(
-    `WITH selected_orders AS (
-       SELECT *, ${dateExpression} AS activity_date
-       FROM orders
-       WHERE shop_id = $1 AND ${istRangeSql(2, 3)}
-     )
-     SELECT activity_date, ${REPORT_METRICS}
-     FROM selected_orders
-     GROUP BY activity_date
-     ORDER BY activity_date`,
-    [shopId, range.from, range.to],
-  );
-  return rows;
+function activityDate(order, range) {
+  const day = dateInTimeZone(new Date(order.created_at), range.timeZone);
+  return range.groupBy === 'month' ? day.slice(0, 7) : day;
 }
 
-async function queryPlatformAnalytics(pool, range) {
-  const { rows } = await pool.query(
-    `SELECT shops.public_id AS shop_id, shops.name AS shop_name,
-            count(orders.id)::int AS orders,
-            coalesce(sum((orders.config->>'billablePages')::int), 0)::int AS pages,
-            coalesce(sum(orders.amount) FILTER (WHERE orders.payment_status = 'verified'), 0)::numeric(12,2) AS revenue,
-            coalesce(sum(orders.amount) FILTER (WHERE orders.payment_status = 'verified' AND orders.payment_method = 'upi'), 0)::numeric(12,2) AS online,
-            coalesce(sum(orders.amount) FILTER (WHERE orders.payment_status = 'verified' AND orders.payment_method = 'cash'), 0)::numeric(12,2) AS cash,
-            count(orders.id) FILTER (WHERE orders.payment_status = 'pending')::int AS payment_pending,
-            count(orders.id) FILTER (WHERE orders.print_status = 'failed')::int AS print_failures
-     FROM shops
-     LEFT JOIN orders ON orders.shop_id = shops.id AND ${istRangeSql(1, 2, 'orders.created_at')}
-     GROUP BY shops.id, shops.public_id, shops.name
-     ORDER BY revenue DESC, shops.name ASC`,
-    [range.from, range.to],
-  );
-  return rows;
+function emptyMetrics() {
+  return { orders: 0, pages: 0, revenue: 0, online: 0, cash: 0, payment_pending: 0, print_failures: 0 };
 }
 
-module.exports = {
-  REPORT_TIME_ZONE,
-  parseAnalyticsRange,
-  queryShopAnalytics,
-  queryPlatformAnalytics,
-};
+function addOrder(metrics, order) {
+  metrics.orders += 1;
+  metrics.pages += Number(order.config?.billablePages || 0);
+  const amount = Number(order.amount || 0);
+  if (order.payment_status === 'verified') {
+    metrics.revenue += amount;
+    if (order.payment_method === 'upi') metrics.online += amount;
+    if (order.payment_method === 'cash') metrics.cash += amount;
+  }
+  if (order.payment_status === 'pending') metrics.payment_pending += 1;
+  if (order.print_status === 'failed') metrics.print_failures += 1;
+}
+
+function roundMetrics(metrics) {
+  return { ...metrics, revenue: Number(metrics.revenue.toFixed(2)), online: Number(metrics.online.toFixed(2)), cash: Number(metrics.cash.toFixed(2)) };
+}
+
+async function queryShopAnalytics(db = getDb(), shopId, range) {
+  const snapshot = await db.collection(COLLECTIONS.orders).where('shop_id', '==', shopId).get();
+  const grouped = new Map();
+  for (const doc of snapshot.docs) {
+    const order = doc.data();
+    if (!inRange(order, range)) continue;
+    const date = activityDate(order, range);
+    const metrics = grouped.get(date) || emptyMetrics();
+    addOrder(metrics, order);
+    grouped.set(date, metrics);
+  }
+  return [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([activity_date, metrics]) => ({ activity_date, ...roundMetrics(metrics) }));
+}
+
+async function queryPlatformAnalytics(db = getDb(), range) {
+  const [shopsSnapshot, ordersSnapshot] = await Promise.all([
+    db.collection(COLLECTIONS.shops).get(),
+    db.collection(COLLECTIONS.orders).get(),
+  ]);
+  const shopsById = new Map(shopsSnapshot.docs.map((doc) => [doc.id, { id: doc.id, ...doc.data() }]));
+  const metricsByShop = new Map([...shopsById.keys()].map((id) => [id, emptyMetrics()]));
+  for (const doc of ordersSnapshot.docs) {
+    const order = doc.data();
+    if (!inRange(order, range)) continue;
+    const metrics = metricsByShop.get(order.shop_id);
+    if (metrics) addOrder(metrics, order);
+  }
+  return [...shopsById.values()].map((shop) => ({
+    shop_id: shop.public_id,
+    shop_name: shop.name,
+    ...roundMetrics(metricsByShop.get(shop.id)),
+  })).sort((a, b) => b.revenue - a.revenue || a.shop_name.localeCompare(b.shop_name));
+}
+
+module.exports = { REPORT_TIME_ZONE, parseAnalyticsRange, queryShopAnalytics, queryPlatformAnalytics };

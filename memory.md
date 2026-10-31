@@ -1,6 +1,6 @@
 # Print Wallah project memory
 
-Read this first. It describes the verified current state (last updated 2026-10-02, v3 customer portal UX / redesign release). When code and this file disagree, the code is right: fix this file.
+Read this first. It describes the current state (updated 2026-10-30 during Firebase migration). When code and this file disagree, the code is right: fix this file.
 
 ## Current State
 
@@ -10,7 +10,7 @@ Working end to end and tested (see Testing): customer upload, settings, real pre
 
 ## Architecture
 
-- Backend: Node 20+, Express, PostgreSQL (`pg`). `src/server.js` (boot, helmet, rate limits, LAN banner), `src/routes/api.js` (all routes, order/payment state machine, photo-sheet PDF), `src/services/{core,upi,webhook,network,audit}.js`, `src/middleware/auth.js`.
+- Backend: Node 22+, Express, Cloud Firestore (`firebase-admin/firestore`), and Cloudflare R2 through the S3-compatible API. `src/firebase.js` initializes the private server client, `src/firestoreStore.js` contains shared document helpers, and `src/routes/api.js` implements API/order/payment/print-queue behavior.
 - Frontend (no framework), script order matters (`defer`): `icons.js` (one registry of 24px line icons, global `icon(name,size)`; `aicon` is an alias), then `app.js` (shared helpers `api/esc/money/cap/toast/jsonBody/setHeading/setBrandHome/setView`, dialog helpers with animated close, router `start()`, sign-in). `app.js` loads per audience: customer routes get `customer.css` + `vendor/pdfjs/pdf.min.js`, `photoedit.js`, `upiLaunch.js`, `customer.js`; admin routes get `admin.css` + `admin.js` (Shop Admin and Super Admin). `styles.css` is the shared design system (tokens, controls, dialogs, toast, sign-in). `vendor/fonts/` has Geist + Geist Mono (OFL, latin + latin-ext so the rupee sign renders in the brand font), served locally because CSP is `'self'` only. `public/vendor/pdfjs/` is pdf.js 3.11.174 (Apache-2.0) used for the real PDF preview, also local for the same reason. `docs/DESIGN_SYSTEM.md` documents the visual system.
 - Print agent: `agent/print_agent.py` (stdlib Python) polls the API, runs a configured OS print command without a shell, keeps a local journal so a job id never prints twice, reports shop heartbeat, and renews the claimed job lease every 20 s during long prints. Startup validates the HTTP(S) server URL and configured print executable; non-default paper types require `{paper_type}` in the command.
 - Auth: JWT (issuer `print-wallah`) in an HTTP-only SameSite=Lax cookie. Shop sessions carry a stamp (`pv`) of the admin email+password hash, so changing either logs old sessions out.
@@ -18,20 +18,9 @@ Working end to end and tested (see Testing): customer upload, settings, real pre
 - Design system (v5 "Graphite"): cool graphite surfaces (`--bg #0b0d11`, panels `--s1..--s4`) separated by hairline borders and layered tone, one restrained emerald accent (`--ac`) used only for the primary action, focus and live state, semantic warn/bad/info colours as small dots + text (not filled capsules). Geist / Geist Mono, 14px UI base, tabular numerals. Radii 6–18px (no pills), elevation tokens `--hi/--sh-1..3`, motion tokens `--ease`, `.view-enter`/`.enter`. No gradient buttons, glow, grid backgrounds or all-caps labels; the only 3D is a tiny pointer tilt on the print preview (fine pointers, never with reduced motion). Reduced-motion and forced-colors media rules live at the end of `styles.css`. Toast and nudge are top-layer popovers so they show above open dialogs.
 - Navigation: customer pages and plain pages use the slim `.topbar` (logo + `#nav-context` links, set with `setHeading(label, chipsHtml)`); the sign-in screen and admin screens hide it (`body[data-view]` is `boot|login|admin|customer|plain`, set by `setView`). Shop Admin uses a 76px icon rail on desktop and a bottom tab bar plus header actions on phones; Super Admin uses a top bar with tabs. `setBrandHome(href)`: customer `/shop/<id>`, Shop Admin `/admin`, Super Admin `/`. The global footer is hidden on customer and admin pages (customer pages have their own `.pw-footer`).
 
-## Database schema overview
+## Firestore data model
 
-`db/schema.sql` creates:
-
-- `shops`: tenant identity, admin hash, JSONB pricing/print settings, UPI identity, start/end access, lock state, hashed print-agent token, heartbeat.
-- `uploads`: shop-bound upload token, private stored filename, MIME, size, detected page count, two-hour expiry.
-- `orders`: shop/upload references, optional generated print-ready photo-sheet PDF filename, immutable print config and price breakdown snapshot, payment/order/print state, customer contact optional, timestamps. One upload token can create only one order.
-- `payments`: one UPI payment record per order, reference, verification status and actor (`shop admin` or `webhook`).
-- `order_uploads`: the photos of a multi-photo sheet order (quantity, position); `payment_events`: log of signed webhook events (unique per provider+event id).
-- `print_jobs`: unique order job with queue/lease/retry/error information. `FOR UPDATE SKIP LOCKED` ensures one worker claims an item.
-- `access_extensions`: extension history.
-- `audit_log`: shop creation/update/lock/extend and shop/order actions.
-
-Indexes support shop access checks, order histories, payment history and print queues. `touch_updated_at()` maintains update timestamps. Server startup initializes the idempotent schema. Database user needs schema/table creation and `pgcrypto` extension privileges.
+Firestore collections are listed in `src/firestoreStore.js`: `shops`, `uploads`, `orders`, `payments`, `print_jobs`, `order_uploads`, `access_extensions`, `audit_log`, `payment_events`, plus idempotency/index/counter collections. State transitions, payment webhooks, queue claiming/reordering, and upload claims use Firestore transactions. Required compound indexes are in `firestore.indexes.json`; direct browser access is denied by `firestore.rules`. Uploaded and generated documents live in the existing private Cloudflare R2 bucket.
 
 ## Authentication and tenant isolation
 
@@ -94,17 +83,17 @@ Latest safe verification on 2026-10-02: `npm test` passed 27/27, Python agent te
 
 ## Shop Admin
 
-1. Render has a service and PostgreSQL but no persistent upload disk yet. Configure/mount private persistent storage, HTTPS `APP_URL`, DB backups and a restore rehearsal before real orders.
+1. Firebase project credentials have not yet been provided or connected. Production data migration and Firebase cutover verification remain outstanding; keep the current production database available until those steps pass.
 2. A live Windows print executable/model is not configured on this PC. Install and test SumatraPDF plus each shop's actual driver; supported devices/options vary. The agent renews leases and rejects glossy auto-print by default.
 3. Manual UPI review is the selected launch mode; automatic gateway verification remains optional future work.
 4. Print files are removed from live storage about 10 minutes after successful print; order/payment/audit records remain. The owner selected no customer-file backups, so ensure disk snapshots/backups do not retain customer bytes beyond this promise.
-5. Multi-document PDF/JPG/PNG bundles, Asia/Kolkata daily/monthly reports, CSV export and platform shop comparison are implemented, but DB-backed bundle/report smoke tests have not yet run on a disposable database. Separate staff accounts are not required for launch; refunds remain manual/not in scope.
+5. Multi-document PDF/JPG/PNG bundles, Asia/Kolkata daily/monthly reports, CSV export and platform shop comparison are implemented. Unit tests pass; Firebase-project-backed production verification is still outstanding. Separate staff accounts are not required for launch; refunds remain manual/not in scope.
 
 **Shop list actions are separate by construction**: "Open portal" is a real `<a href="/shop/<id>" target="_blank">` (`data-portal-link`); Details/Extend/Lock are `<button data-action=...>`. The earlier bug was that the portal cell was a button with `data-action="view"` and `wireShopRows` mapped `view` and `details` to the same `showShopDetails()`; the row wiring now only binds `button[data-action]` and `view` no longer exists. Login screens link to each other with real URLs (`/` Super Admin, `/admin` Shop Admin).
 
 ## Environment / Setup
 
-`.env.example` is the reference. Required: `DATABASE_URL`, `JWT_SECRET` (32+), `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_PASSWORD`. `HOST` defaults to `0.0.0.0` (LAN). Production needs `APP_URL` (https), persistent private `UPLOAD_DIR`, `NODE_ENV=production`. Optional `PAYMENT_WEBHOOK_SECRET`. The server reads `.env` only at start: **restart after editing it** (a stale password is the usual cause of a Super Admin 401). Schema is applied idempotently at startup (`db/schema.sql`, requires the `pgcrypto` extension).
+`.env.example` is the reference. Required: `FIREBASE_PROJECT_ID`, `FIREBASE_SERVICE_ACCOUNT_JSON`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `JWT_SECRET` (32+), `SUPER_ADMIN_EMAIL`, and `SUPER_ADMIN_PASSWORD`. Local and hosted instances must use the same Firebase project and R2 bucket. `HOST` defaults to `0.0.0.0` (LAN); production needs HTTPS `APP_URL` and `NODE_ENV=production`. Optional: `PAYMENT_WEBHOOK_SECRET`. Restart after changing environment settings. See `docs/FIREBASE.md`.
 
 Development on a phone: `npm run dev` (or `npm start`) prints `Local:` and `Network:` URLs. Open the Network URL on the phone (same Wi-Fi), sign in to Super Admin there, and shop links/QR codes will contain that address. If it does not connect, allow Node through the OS firewall for private networks. CSP `upgrade-insecure-requests`, HSTS and COOP are production-only so plain-HTTP LAN testing works.
 
@@ -135,7 +124,7 @@ All of the above, plus the fixes listed in the Change Log.
 - UPI success cannot be detected automatically (see UPI payments).
 - A UPI order the customer never pays stays `pending_payment` until cancelled by the customer or shop (no auto-expiry, deliberately, to avoid cancelling an order whose money arrived late).
 - Preview is approximate: it cannot know a printer driver's real margins or colour handling.
-- `storage/` and `.test-postgres/` in the project folder contain leftovers from earlier testing; they are not used by the code and can be deleted. `storage/` must not be committed or deployed with test files.
+- Any old local database directory or existing production database must be inspected and retained until production records are migrated and verified in Firebase; do not delete blindly.
 - `pdf-parse` prints "Warning: Indexing all PDF objects" for some PDFs; harmless.
 - Photo edits run in the customer's browser; very large photos on low-memory phones are downscaled to at most 4000 px on the long side (about 340 dpi for a 4x6) and the JPEG is re-encoded once at quality 0.93. Sharpness uses a box-blur unsharp mask scaled to image size, so it is consistent between preview and print but is not a professional sharpening algorithm.
 - Edits (zoom, pan) are per photo and are lost on reload; they are applied only when the order is placed.

@@ -32,7 +32,8 @@
   function parseUpiUri(uri) {
     let url;
     try { url = new URL(String(uri)); } catch { return null; }
-    if (url.protocol !== 'upi:' || url.hostname !== 'pay' || !url.search) return null;
+    const validEndpoint = url.hostname === 'pay' || (!url.hostname && url.pathname.replace(/^\/+|\/+$/g, '') === 'pay');
+    if (url.protocol !== 'upi:' || !validEndpoint || !url.search) return null;
     const get = (key) => url.searchParams.get(key);
     return { pa: get('pa'), pn: get('pn'), am: get('am'), cu: get('cu'), tr: get('tr'), tn: get('tn'), query: url.search.slice(1) };
   }

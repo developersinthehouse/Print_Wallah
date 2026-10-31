@@ -5,49 +5,50 @@ const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 const path = require('node:path');
 const fs = require('node:fs');
-const { initialize, pool } = require('./db');
+const { getFirebase } = require('./firebase');
+const { COLLECTIONS } = require('./firestoreStore');
+const { fileStorage } = require('./services/fileStorage');
 const api = require('./routes/api');
 const { createAgentLeaseRouter } = require('./routes/agentLease');
 const { cleanupCompletedOrderFiles } = require('./services/retention');
+const { cleanupExpiredUploads } = require('./services/uploadRetention');
 const jwt = require('jsonwebtoken');
 const { lanAddresses } = require('./services/network');
 const { webhookEnabled } = require('./services/webhook');
-const { isSafeStoredFilename } = require('./services/storagePolicy');
 
 const production = process.env.NODE_ENV === 'production';
 const limiter = (limit, options = {}) => rateLimit({ windowMs: 15 * 60 * 1000, limit, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many requests. Please wait a few minutes and try again.' }, ...options });
 
 function requireConfig() {
   if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
-    process.env.JWT_SECRET = 'print-wallah-default-dev-jwt-secret-key-2026-min-32-chars';
+    throw new Error('Configure JWT_SECRET with a private random value of at least 32 characters.');
   }
   if (!String(process.env.SUPER_ADMIN_EMAIL || '').trim()) {
-    process.env.SUPER_ADMIN_EMAIL = 'admin@printwallah.com';
+    throw new Error('Configure SUPER_ADMIN_EMAIL before starting Print Wallah.');
   }
   if (!String(process.env.SUPER_ADMIN_PASSWORD || '')) {
-    process.env.SUPER_ADMIN_PASSWORD = 'adminpassword123';
+    throw new Error('Configure SUPER_ADMIN_PASSWORD before starting Print Wallah.');
   }
-  if (!String(process.env.UPLOAD_DIR || '').trim() || !path.isAbsolute(process.env.UPLOAD_DIR)) {
-    process.env.UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || './storage');
+  if (!String(process.env.FIREBASE_PROJECT_ID || '').trim() || !String(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '').trim()) {
+    throw new Error('Configure FIREBASE_PROJECT_ID and FIREBASE_SERVICE_ACCOUNT_JSON before starting Print Wallah.');
   }
+  if (![process.env.R2_ACCOUNT_ID, process.env.R2_ACCESS_KEY_ID, process.env.R2_SECRET_ACCESS_KEY, process.env.R2_BUCKET_NAME].every((value) => String(value || '').trim())) {
+    throw new Error('Configure R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET_NAME before starting Print Wallah.');
+  }
+  process.env.STORAGE_PROVIDER = 'r2';
 }
 
 async function main() {
   requireConfig();
-  await initialize();
-  const uploadDir = path.resolve(process.env.UPLOAD_DIR || './storage');
-  fs.mkdirSync(uploadDir, { recursive: true });
+  const { db } = getFirebase();
   const cleanupUploads = async () => {
-    const { rows } = await pool.query(`DELETE FROM uploads u WHERE u.expires_at<now() AND NOT EXISTS(SELECT 1 FROM orders o WHERE o.upload_id=u.id) AND NOT EXISTS(SELECT 1 FROM order_uploads x WHERE x.upload_id=u.id) RETURNING stored_name`);
-    const safeRows = rows.filter((row) => isSafeStoredFilename(row.stored_name));
-    for (const row of safeRows) fs.rmSync(path.join(uploadDir, row.stored_name), { force: true });
-    if (safeRows.length !== rows.length) console.warn(`Skipped ${rows.length - safeRows.length} expired upload row(s) with unsafe stored filenames`);
-    if (rows.length) console.log(`Removed ${safeRows.length} expired unclaimed upload(s)`);
+    const { uploadsDeleted } = await cleanupExpiredUploads({ db, storage: fileStorage });
+    if (uploadsDeleted) console.log(`Removed ${uploadsDeleted} expired unclaimed upload(s)`);
   };
   cleanupUploads().catch(error => console.error('Upload cleanup failed:', error.message));
   const cleanupTimer = setInterval(() => cleanupUploads().catch(error => console.error('Upload cleanup failed:', error.message)), 60 * 60 * 1000);
   cleanupTimer.unref();
-  const cleanupCompletedFiles = () => cleanupCompletedOrderFiles({ pool, uploadDir })
+  const cleanupCompletedFiles = () => cleanupCompletedOrderFiles({ db, storage: fileStorage })
     .then(({ ordersDeleted }) => { if (ordersDeleted) console.log(`Deleted print files for ${ordersDeleted} completed order(s)`); })
     .catch(error => console.error('Completed-order file cleanup failed:', error?.stack || error));
   cleanupCompletedFiles();
@@ -77,7 +78,7 @@ async function main() {
   app.use('/api/shops', limiter(900));
   app.use('/api/orders', limiter(900, { skip: (req) => req.method !== 'GET' }));
   app.use('/api/orders', limiter(80, { skip: (req) => req.method === 'GET' }));
-  app.use('/api/agent/:shopId', createAgentLeaseRouter(pool));
+  app.use('/api/agent/:shopId', createAgentLeaseRouter());
   app.use('/api', api);
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
   // Until the real logo is dropped in as public/assets/logo.png, serve the placeholder at the same URL so pages never show a broken image or a 404.
@@ -106,7 +107,7 @@ async function main() {
   const host = process.env.HOST || '0.0.0.0'; // reachable from other devices on the same network; set HOST=127.0.0.1 to keep it local
   const server = app.listen(port, host, () => printBanner(port, host));
   server.on('error', (error) => { console.error(error.code === 'EADDRINUSE' ? `Port ${port} is already in use. Stop the other process or set PORT in .env.` : `Server error: ${error.message}`); process.exit(1); });
-  const shutdown = () => { clearInterval(cleanupTimer); clearInterval(retentionTimer); server.close(async () => { await pool.end(); process.exit(0); }); };
+  const shutdown = () => { clearInterval(cleanupTimer); clearInterval(retentionTimer); server.close(() => process.exit(0)); };
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
 }
 

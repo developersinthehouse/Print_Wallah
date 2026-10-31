@@ -8,32 +8,57 @@ const TOKEN = 'test-agent-lease-token';
 const SHOP_PUBLIC_ID = 'SHOPPUBLIC1';
 const SHOP_ID = '11111111-1111-4111-8111-111111111111';
 const JOB_ID = '22222222-2222-4222-8222-222222222222';
-let leaseActive = true;
 let leaseUpdates = 0;
 let server;
 let baseUrl;
 
-const pool = {
-  async query(sql, values) {
-    if (sql.includes('SELECT id FROM shops')) {
-      const tokenHash = crypto.createHash('sha256').update(TOKEN).digest('hex');
-      return values[0] === SHOP_PUBLIC_ID && values[1] === tokenHash
-        ? { rows: [{ id: SHOP_ID }] }
-        : { rows: [] };
-    }
-    if (sql.includes('UPDATE print_jobs')) {
-      if (!leaseActive || values[0] !== JOB_ID || values[1] !== SHOP_ID) return { rows: [] };
-      leaseUpdates += 1;
-      return { rows: [{ id: JOB_ID }] };
-    }
-    if (sql.includes('UPDATE shops')) return { rows: [] };
-    throw new Error(`Unexpected query: ${sql}`);
-  },
-};
+function fakeDb() {
+  const collections = {
+    shops: new Map([[SHOP_ID, { public_id: SHOP_PUBLIC_ID, agent_token_hash: crypto.createHash('sha256').update(TOKEN).digest('hex') }]]),
+    print_jobs: new Map([[JOB_ID, { shop_id: SHOP_ID, claimed_by: 'print-agent', status: 'claimed' }]]),
+  };
+  const refFor = (collection, id) => ({ id, async get() {
+    const data = collections[collection].get(id);
+    return { id, exists: Boolean(data), data: () => data };
+  } });
+  return {
+    collection(name) {
+      const map = collections[name];
+      return {
+        doc(id) { return refFor(name, String(id)); },
+        where(field, operator, value) {
+          const filters = [[field, operator, value]];
+          const query = {
+            where(nextField, nextOperator, nextValue) { filters.push([nextField, nextOperator, nextValue]); return query; },
+            limit() { return query; },
+            async get() {
+              const docs = [...map.entries()].filter(([, data]) => filters.every(([key, , expected]) => data[key] === expected))
+                .map(([id, data]) => ({ id, ref: refFor(name, id), data: () => data }));
+              return { empty: docs.length === 0, docs };
+            },
+          };
+          return query;
+        },
+      };
+    },
+    async runTransaction(work) {
+      return work({
+        get: (ref) => ref.get(),
+        update(ref, patch) {
+          const collection = Object.keys(collections).find((name) => collections[name].has(ref.id));
+          if (collection) Object.assign(collections[collection].get(ref.id), patch);
+          if (collection === 'print_jobs') leaseUpdates += 1;
+        },
+      });
+    },
+    expireLease() { collections.print_jobs.get(JOB_ID).status = 'completed'; },
+  };
+}
+const db = fakeDb();
 
 before(async () => {
   const app = express();
-  app.use('/api/agent/:shopId', createAgentLeaseRouter(pool));
+  app.use('/api/agent/:shopId', createAgentLeaseRouter({ db }));
   app.use((error, request, response, next) => response.status(500).json({ error: error.message }));
   server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
@@ -68,7 +93,7 @@ test('agent token renews only an active lease belonging to its shop', async () =
   assert.deepEqual(await renewed.json(), { ok: true });
   assert.equal(leaseUpdates, 1);
 
-  leaseActive = false;
+  db.expireLease();
   const expired = await fetch(`${baseUrl}/api/agent/${SHOP_PUBLIC_ID}/jobs/${JOB_ID}/heartbeat`, {
     method: 'POST',
     headers: { authorization: `Bearer ${TOKEN}` },

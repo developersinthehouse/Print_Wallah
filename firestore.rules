@@ -1,0 +1,11 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // The Express backend accesses Firestore using the Firebase Admin SDK.
+    // Browser clients must use the authenticated Print Wallah API instead.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

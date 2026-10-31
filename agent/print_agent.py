@@ -285,8 +285,18 @@ def run():
         try:
             request(config, base + "/heartbeat", "POST", {"agentName": config.get("agent_name", "Shop print agent")})
             result = request(config, base + "/jobs")
-            if result.get("job"):
-                print_job(config, result["job"])
+            logger.info("Raw /jobs response: %s", json.dumps(result, default=str)[:1500])
+            job = result.get("job")
+            if job and isinstance(job, dict):
+                logger.info("Job keys received: %s", list(job.keys()))
+                # Try expected + common alternatives
+                job_id = job.get("job_id") or job.get("jobId") or job.get("id")
+                if not job_id:
+                    logger.error("No job ID found in job object. Skipping this cycle.")
+                    time.sleep(config["poll_seconds"])
+                    continue
+                job["job_id"] = job_id  # normalize for rest of the code
+                print_job(config, job)
             else:
                 time.sleep(config["poll_seconds"])
         except KeyboardInterrupt:

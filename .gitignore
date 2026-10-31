@@ -12,6 +12,7 @@ coverage/
 storage/**
 !storage/.gitkeep
 .test-postgres/
+.private-firebase-migration/
 agent/config.json
 agent/agent-state.sqlite3*
 test/sample.pdf

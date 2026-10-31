@@ -1,5 +1,5 @@
-const { pool } = require('../db');
+const { writeAudit } = require('../firestoreStore');
 async function audit(shopId, actor, action, details = {}) {
-  await pool.query('INSERT INTO audit_log(shop_id, actor, action, details) VALUES($1,$2,$3,$4)', [shopId || null, actor, action, details]);
+  await writeAudit({ shop_id: shopId || null, actor, action, details });
 }
 module.exports = { audit };

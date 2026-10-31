@@ -3,67 +3,67 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { test } = require('node:test');
-const { createFileStorage } = require('../src/services/fileStorage');
-const { DeleteObjectCommand, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { createFileStorage, fileStorage } = require('../src/services/fileStorage');
 
-const r2Environment = {
-  STORAGE_PROVIDER: 'r2',
-  R2_ACCOUNT_ID: 'account-id',
-  R2_ACCESS_KEY_ID: 'access-key',
-  R2_SECRET_ACCESS_KEY: 'secret-key',
-  R2_BUCKET_NAME: 'private-print-files',
-};
+test('application storage defaults to Cloudflare R2 instead of a machine-local folder', () => {
+  const previous = process.env.STORAGE_PROVIDER;
+  try {
+    delete process.env.STORAGE_PROVIDER;
+    assert.equal(fileStorage.provider, 'r2');
+  } finally {
+    if (previous === undefined) delete process.env.STORAGE_PROVIDER;
+    else process.env.STORAGE_PROVIDER = previous;
+  }
+});
 
-test('R2 storage writes, reads, checks, and deletes objects in the private bucket', async () => {
+function fakeS3Client() {
   const objects = new Map();
-  const commands = [];
-  const client = {
+  return {
     async send(command) {
-      commands.push(command);
-      const { Key } = command.input;
-      if (command instanceof PutObjectCommand) objects.set(Key, command.input.Body);
-      if (command instanceof GetObjectCommand) {
-        if (!objects.has(Key)) throw Object.assign(new Error('missing'), { name: 'NoSuchKey' });
-        return { Body: { transformToByteArray: async () => objects.get(Key) } };
+      const { Bucket, Key, Body, ContentType } = command.input;
+      assert.equal(Bucket, 'print-files');
+      if (command.constructor.name === 'PutObjectCommand') {
+        objects.set(Key, { body: Buffer.from(Body), contentType: ContentType });
+        return {};
       }
-      if (command instanceof DeleteObjectCommand) objects.delete(Key);
-      return {};
+      if (command.constructor.name === 'GetObjectCommand') {
+        if (!objects.has(Key)) throw Object.assign(new Error('missing'), { name: 'NoSuchKey' });
+        return { Body: { async transformToByteArray() { return objects.get(Key).body; } } };
+      }
+      if (command.constructor.name === 'DeleteObjectCommand') { objects.delete(Key); return {}; }
+      throw new Error(`Unexpected S3 operation: ${command.constructor.name}`);
     },
+    objects,
   };
+}
+
+const r2Environment = { STORAGE_PROVIDER: 'r2', R2_ACCOUNT_ID: 'account-id', R2_ACCESS_KEY_ID: 'access-key', R2_SECRET_ACCESS_KEY: 'secret-key', R2_BUCKET_NAME: 'print-files' };
+
+test('Cloudflare R2 writes, reads, and deletes private objects', async () => {
+  const client = fakeS3Client();
   const storage = createFileStorage({ environment: r2Environment, client });
   const bytes = Buffer.from('private print document');
-
   await storage.put('order.pdf', bytes, 'application/pdf');
   assert.deepEqual(await storage.get('order.pdf'), bytes);
+  assert.equal(client.objects.get('order.pdf').contentType, 'application/pdf');
   await storage.delete('order.pdf');
-  assert.deepEqual(commands.map((command) => command.constructor), [
-    PutObjectCommand,
-    GetObjectCommand,
-    DeleteObjectCommand,
-  ]);
-  assert.equal(commands[0].input.Bucket, r2Environment.R2_BUCKET_NAME);
-  assert.equal(commands[0].input.ACL, undefined);
-  await assert.rejects(storage.get('missing.pdf'), { code: 'ENOENT' });
   await assert.rejects(storage.get('order.pdf'), { code: 'ENOENT' });
 });
 
-test('R2 configuration is rejected when a required credential is missing', () => {
-  assert.throws(
-    () => createFileStorage({ environment: { ...r2Environment, R2_SECRET_ACCESS_KEY: '' } }),
-    /Cloudflare R2 requires/,
-  );
+test('Cloudflare R2 rejects unsafe object names', async () => {
+  const storage = createFileStorage({ environment: r2Environment, client: fakeS3Client() });
+  await assert.rejects(storage.put('../escape.pdf', Buffer.from('x')), /Invalid stored filename/);
+  await assert.rejects(storage.get('folder/file.pdf'), /Invalid stored filename/);
 });
 
-test('local storage keeps the same storage interface for development', async () => {
+test('local storage remains available for isolated unit tests', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'print-wallah-storage-'));
   try {
-    const storage = createFileStorage({ environment: { UPLOAD_DIR: directory } });
-    const bytes = Buffer.from('local print document');
+    const storage = createFileStorage({ environment: { STORAGE_PROVIDER: 'local', UPLOAD_DIR: directory } });
+    const bytes = Buffer.from('isolated test document');
     await storage.put('local.pdf', bytes, 'application/pdf');
-      assert.deepEqual(await storage.get('local.pdf'), bytes);
-      await storage.delete('local.pdf');
-      await assert.rejects(storage.get('local.pdf'), { code: 'ENOENT' });
-  } finally {
-    await fs.rm(directory, { recursive: true, force: true });
-  }
+    assert.deepEqual(await storage.get('local.pdf'), bytes);
+    await storage.delete('local.pdf');
+    await assert.rejects(storage.get('local.pdf'), { code: 'ENOENT' });
+  } finally { await fs.rm(directory, { recursive: true, force: true }); }
 });

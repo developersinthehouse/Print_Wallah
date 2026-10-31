@@ -11,7 +11,6 @@ All routes are under `/api`. Admin sessions use an HTTP-only, same-site cookie. 
 - `GET /super/overview`
 - `GET /super/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD&groupBy=day|month` — per-shop comparison in Asia/Kolkata time with orders, pages, verified cash/UPI revenue, pending payments and print failures.
 - `GET /admin/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD&groupBy=day|month` — same metrics for the authenticated shop, grouped in Asia/Kolkata time.
-- `GET /super/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD&groupBy=day|month` — per-shop comparison using Asia/Kolkata dates; includes orders, pages, verified revenue by cash/UPI, pending payments and print failures.
 - `GET /super/shops?q=...`
 - `POST /super/shops` — shop details, `adminEmail`, `adminPassword`, optional `pricing`, `upiId`, `upiName`, `accessDays`
 - `GET /super/shops/:shopId`
@@ -26,7 +25,7 @@ Shop creation returns the public shop ID, customer URL, QR data URL, and a one-t
 Shop IDs are matched case-insensitively. Every endpoint is bound to the shop in the URL; an upload token from one shop is rejected by another.
 
 - `GET /shops/:shopId/public`: shop settings, rates, `upiConfigured`, `printerOnline`, photo sizes, `maxUploadMb`. 404 unknown shop, 423 locked or expired.
-- `POST /shops/:shopId/uploads`: multipart `document` (PDF, JPG, PNG). Returns `uploadToken`, `pages`, and for images `width`/`height`. Rejects corrupt PDFs, mismatched content types and images over 12000 px. In production returns 503 until `UPLOAD_DIR` is an absolute mounted persistent path.
+- `POST /shops/:shopId/uploads`: multipart `document` (PDF, JPG, PNG). Returns `uploadToken`, `pages`, and for images `width`/`height`. Rejects corrupt PDFs, mismatched content types and images over 12000 px. File bytes are stored in the configured private Cloudflare R2 bucket.
 - `POST /shops/:shopId/price`: `{uploadToken, documentTokens?, config}` returns the exact quote the order will use. `documentTokens` bundles 1–10 distinct, unexpired uploads from this shop; all PDF pages and each JPG/PNG image count as pages. Bundles use shared settings, print every page, and do not accept per-file page ranges. Omitting `documentTokens` keeps single-document and photo-sheet behavior.
 - `POST /shops/:shopId/orders`: `{uploadToken, documentTokens?, paymentMethod: "cash"|"upi", config, expectedAmount?, customerName?, customerPhone?}`.
   - The amount is always recomputed on the server. If `expectedAmount` differs, the response is `409 {code:"PRICE_CHANGED", currentAmount}`.
@@ -65,7 +64,7 @@ Every shop admin endpoint checks the authenticated shop against database ownersh
 Every agent request sends `Authorization: Bearer <shop-agent-token>`.
 
 - `POST /agent/:shopId/heartbeat` — `{agentName}`
-- `GET /agent/:shopId/jobs` — atomically claims one job or returns `{job:null}`
+- `GET /agent/:shopId/jobs` — atomically claims one job and returns `{job:{job_id,order_id,...,downloadUrl}}`, or `{job:null}`. `downloadUrl` is the relative private document endpoint for the claimed `job_id`.
 - `POST /agent/:shopId/jobs/:jobId/heartbeat` — renews the active claimed job lease; returns 409 if the lease is no longer active
 - `GET /agent/:shopId/jobs/:jobId/document` — private download for the currently claimed job
 - `POST /agent/:shopId/jobs/:jobId/result` — `{status:"completed"|"failed",error?}`

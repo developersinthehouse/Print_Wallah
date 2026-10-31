@@ -11,7 +11,8 @@ function isActive(shop, now = new Date()) {
 
 function statusOf(shop, now = new Date()) {
   if (shop.manually_locked) return 'locked';
-  return new Date(shop.access_end) <= now ? 'expired' : 'active';
+  const expiry = new Date(shop.access_end);
+  return !Number.isFinite(expiry.getTime()) || expiry <= now ? 'expired' : 'active';
 }
 
 function calculatePrice({ pricing, pages, copies, color, paperSize, paperType, duplex, photoSheets }) {
@@ -27,7 +28,9 @@ function calculatePrice({ pricing, pages, copies, color, paperSize, paperType, d
   if (!Number.isInteger(photoSheets) || photoSheets < 0 || photoSheets > 500) throw new Error('Photo sheets must be between 0 and 500');
   const printablePages = duplex && paperType === 'normal' ? Math.ceil(pages / 2) : pages;
   const base = Number(photoSheets || 0) > 0 ? 0 : printablePages * copies * rate;
-  const photoRate = size === 'A3' && pricing.photo_sheet_a3 !== undefined && pricing.photo_sheet_a3 !== null && pricing.photo_sheet_a3 !== '' ? Number(pricing.photo_sheet_a3) : Number(pricing.photo_sheet || 0);
+  const photoValue = size === 'A3' && pricing.photo_sheet_a3 !== undefined && pricing.photo_sheet_a3 !== null && pricing.photo_sheet_a3 !== '' ? pricing.photo_sheet_a3 : pricing.photo_sheet;
+  const photoRate = Number(photoValue);
+  if (photoValue === '' || !Number.isFinite(photoRate) || photoRate < 0) throw new Error('Photo sheet pricing is not configured');
   const photoCharge = photoSheets * photoRate;
   return { rate, printablePages, base: roundMoney(base), photoCharge: roundMoney(photoCharge), total: roundMoney(base + photoCharge) };
 }
